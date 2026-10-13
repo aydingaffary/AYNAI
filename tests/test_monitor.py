@@ -1,7 +1,9 @@
 
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
-
+from aynai.storage import get_results
 from aynai.monitor import monitor_services
 
 
@@ -68,6 +70,37 @@ class TestMonitorServices(unittest.TestCase):
         self.assertEqual(mock_check_http.call_count, 2)
 
 
+    
+    def test_monitor_saves_results_to_database(self):
+        result = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": 120.5,
+            "error": None,
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+
+            with patch(
+                "aynai.monitor.check_http",
+                return_value=result,
+            ):
+                results = monitor_services(
+                    ["https://example.com"],
+                    db_path=db_path,
+                )
+
+            saved_results = get_results(
+                url="https://example.com",
+                db_path=db_path,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(saved_results), 1)
+        self.assertEqual(saved_results[0]["status_code"], 200)
+        self.assertEqual(saved_results[0]["is_available"], 1)
 
 if __name__ == "__main__":
     unittest.main()

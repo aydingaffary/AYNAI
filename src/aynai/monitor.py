@@ -1,15 +1,19 @@
 
-from time import perf_counter
+from pathlib import Path
 
 from aynai.probes.http_probe import check_http
+from aynai.storage import DEFAULT_DB_PATH, save_result
 
 
-def monitor_services(urls: list[str]) -> list[dict]:
+def monitor_services(
+    urls: list[str],
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> list[dict]:
     """
-    Check multiple HTTP services and collect their results.
+    Check multiple HTTP services, collect results,
+    and persist each result to SQLite.
 
-    Unexpected errors from one service are recorded so that
-    monitoring can continue for the remaining services.
+    Monitoring continues if checking or saving one service fails.
     """
     results = []
 
@@ -29,5 +33,13 @@ def monitor_services(urls: list[str]) -> list[dict]:
             }
 
         results.append(result)
+
+        try:
+            save_result(result, db_path)
+        except Exception as error:
+            print(
+                f"Warning: could not save result for {url}: "
+                f"{type(error).__name__}: {error}"
+            )
 
     return results
