@@ -21,21 +21,22 @@ def monitor_services(
         try:
             result = check_http(url)
         except Exception as error:
+            import traceback
+
+            print(f"\nUnexpected error while checking {url}:")
+            traceback.print_exc()
+
             result = {
                 "url": url,
                 "is_available": False,
                 "status_code": None,
                 "response_time_ms": 0.0,
-                "error": (
-                    f"Unexpected error: "
-                    f"{type(error).__name__}: {error}"
-                ),
+                "error": f"Unexpected error: {type(error).__name__}: {error}",
             }
-
         results.append(result)
 
         try:
-            save_result(result, db_path)
+            result["record_id"] = save_result(result, db_path)
         except Exception as error:
             print(
                 f"Warning: could not save result for {url}: "

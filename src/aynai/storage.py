@@ -38,7 +38,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
 def save_result(
     result: dict,
     db_path: str | Path = DEFAULT_DB_PATH,
-) -> None:
+) -> int:
     """Save one monitoring result to the database."""
     init_db(db_path)
 
@@ -47,7 +47,7 @@ def save_result(
     connection = sqlite3.connect(db_path)
 
     try:
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO monitoring_results (
                 url,
@@ -69,6 +69,7 @@ def save_result(
             ),
         )
         connection.commit()
+        return cursor.lastrowid
     finally:
         connection.close()
 

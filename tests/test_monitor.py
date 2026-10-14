@@ -3,6 +3,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
 from aynai.storage import get_results
 from aynai.monitor import monitor_services
 
@@ -33,7 +34,9 @@ class TestMonitorServices(unittest.TestCase):
             "https://www.python.org",
         ]
 
-        results = monitor_services(urls)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            results = monitor_services(urls, db_path=db_path)
 
         self.assertEqual(len(results), 2)
         self.assertEqual(results[0]["status_code"], 200)
@@ -41,7 +44,7 @@ class TestMonitorServices(unittest.TestCase):
         self.assertEqual(results[0]["url"], urls[0])
         self.assertEqual(results[1]["url"], urls[1])
         self.assertEqual(mock_check_http.call_count, 2)
-   
+
     @patch("aynai.monitor.check_http")
     def test_unexpected_error_does_not_stop_monitoring(
         self, mock_check_http
@@ -62,15 +65,15 @@ class TestMonitorServices(unittest.TestCase):
             "https://www.python.org",
         ]
 
-        results = monitor_services(urls)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+            results = monitor_services(urls, db_path=db_path)
 
         self.assertEqual(len(results), 2)
         self.assertIsNotNone(results[0]["error"])
         self.assertEqual(results[1]["status_code"], 200)
         self.assertEqual(mock_check_http.call_count, 2)
 
-
-    
     def test_monitor_saves_results_to_database(self):
         result = {
             "url": "https://example.com",
@@ -101,6 +104,7 @@ class TestMonitorServices(unittest.TestCase):
         self.assertEqual(len(saved_results), 1)
         self.assertEqual(saved_results[0]["status_code"], 200)
         self.assertEqual(saved_results[0]["is_available"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
