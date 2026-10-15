@@ -1,4 +1,3 @@
-
 import unittest
 from unittest.mock import patch, MagicMock
 from urllib.error import HTTPError
@@ -40,6 +39,7 @@ class TestHttpProbe(unittest.TestCase):
         self.assertEqual(result["status_code"], 503)
         self.assertIsNotNone(result["error"])
         self.assertGreaterEqual(result["response_time_ms"], 0)
+
     @patch("aynai.probes.http_probe.urllib.request.urlopen")
     def test_timeout_error(self, mock_urlopen):
         mock_urlopen.side_effect = TimeoutError("Request timed out")
@@ -53,7 +53,7 @@ class TestHttpProbe(unittest.TestCase):
         self.assertIsNone(result["status_code"])
         self.assertIsNotNone(result["error"])
         self.assertIn("timed out", result["error"].lower())
-        self.assertGreaterEqual(result["response_time_ms"], 0)        
+        self.assertGreaterEqual(result["response_time_ms"], 0)
 
 
 if __name__ == "__main__":

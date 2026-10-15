@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 from aynai.probes.http_probe import check_http

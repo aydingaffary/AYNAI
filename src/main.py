@@ -1,4 +1,3 @@
-
 from aynai.analytics import summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
@@ -10,7 +9,6 @@ URLS = [
 ]
 
 INTERVAL_SECONDS = 30
-
 
 
 def display_results(results: list[dict]) -> None:
@@ -44,7 +42,6 @@ def display_results(results: list[dict]) -> None:
         print("-" * 40)
 
 
-
 def display_analytics() -> None:
     print("\nAYNAI - Monitoring Analytics")
     print("=" * 40)
@@ -56,17 +53,9 @@ def display_analytics() -> None:
         print(f"Total checks: {summary['total_checks']}")
         print(f"Successful: {summary['successful_checks']}")
         print(f"Failed: {summary['failed_checks']}")
-        print(
-            "Availability: "
-            f"{summary['availability_rate_percent']}%"
-        )
-        print(
-            "Average response time: "
-            f"{summary['average_response_time_ms']} ms"
-        )
-        print(
-            f"P95 response time: {summary['p95_response_time_ms']} ms"
-        )
+        print("Availability: " f"{summary['availability_rate_percent']}%")
+        print("Average response time: " f"{summary['average_response_time_ms']} ms")
+        print(f"P95 response time: {summary['p95_response_time_ms']} ms")
         print("-" * 40)
 
 

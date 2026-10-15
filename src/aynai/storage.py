@@ -1,12 +1,8 @@
-
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-DEFAULT_DB_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "aynai.db"
-)
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "aynai.db"
 
 
 def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
@@ -17,8 +13,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
     connection = sqlite3.connect(db_path)
 
     try:
-        connection.execute(
-            """
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS monitoring_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT NOT NULL,
@@ -28,8 +23,7 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 error TEXT,
                 checked_at TEXT NOT NULL
             )
-            """
-        )
+            """)
         connection.commit()
     finally:
         connection.close()
@@ -86,13 +80,11 @@ def get_results(
 
     try:
         if url is None:
-            cursor = connection.execute(
-                """
+            cursor = connection.execute("""
                 SELECT *
                 FROM monitoring_results
                 ORDER BY id DESC
-                """
-            )
+                """)
         else:
             cursor = connection.execute(
                 """

@@ -1,4 +1,4 @@
-
+import math
 from pathlib import Path
 from statistics import median
 
@@ -11,11 +11,17 @@ def detect_latency_anomaly(
     threshold: float = 3.5,
 ) -> dict:
     """Detect unusually high latency using the robust MAD method."""
+    if not math.isfinite(current_response_time_ms):
+        raise ValueError("Response time must be finite")
+
+    if not all(math.isfinite(value) for value in historical_response_times):
+        raise ValueError("Historical response times must be finite")
+
     if current_response_time_ms < 0:
         raise ValueError("Response time cannot be negative")
 
-    if threshold <= 0:
-        raise ValueError("Threshold must be greater than zero")
+    if not math.isfinite(threshold) or threshold <= 0:
+        raise ValueError("Threshold must be finite and greater than zero")
 
     if any(value < 0 for value in historical_response_times):
         raise ValueError("Historical response times cannot be negative")
@@ -29,10 +35,7 @@ def detect_latency_anomaly(
         }
 
     baseline = median(historical_response_times)
-    deviations = [
-        abs(value - baseline)
-        for value in historical_response_times
-    ]
+    deviations = [abs(value - baseline) for value in historical_response_times]
     mad = median(deviations)
 
     if mad == 0:
@@ -41,11 +44,7 @@ def detect_latency_anomaly(
             and current_response_time_ms > 1.5 * baseline
         )
     else:
-        robust_z_score = (
-            0.6745
-            * (current_response_time_ms - baseline)
-            / mad
-        )
+        robust_z_score = 0.6745 * (current_response_time_ms - baseline) / mad
         is_anomaly = robust_z_score > threshold
 
     return {
@@ -75,9 +74,7 @@ def analyze_service_latency(
 
     if exclude_record_id is not None:
         historical_results = [
-            result
-            for result in results
-            if result["id"] != exclude_record_id
+            result for result in results if result["id"] != exclude_record_id
         ]
     else:
         historical_results = results

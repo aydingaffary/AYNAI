@@ -1,4 +1,3 @@
-
 import unittest
 import tempfile
 from pathlib import Path
@@ -46,9 +45,7 @@ class TestMonitorServices(unittest.TestCase):
         self.assertEqual(mock_check_http.call_count, 2)
 
     @patch("aynai.monitor.check_http")
-    def test_unexpected_error_does_not_stop_monitoring(
-        self, mock_check_http
-    ):
+    def test_unexpected_error_does_not_stop_monitoring(self, mock_check_http):
         mock_check_http.side_effect = [
             RuntimeError("Unexpected failure"),
             {

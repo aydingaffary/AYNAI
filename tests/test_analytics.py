@@ -1,4 +1,3 @@
-
 import unittest
 import tempfile
 from pathlib import Path
@@ -39,12 +38,8 @@ class TestAnalytics(unittest.TestCase):
             self.assertEqual(summary["total_checks"], 4)
             self.assertEqual(summary["successful_checks"], 3)
             self.assertEqual(summary["failed_checks"], 1)
-            self.assertEqual(
-                summary["availability_rate_percent"], 75.0
-            )
-            self.assertEqual(
-                summary["average_response_time_ms"], 200.0
-            )
+            self.assertEqual(summary["availability_rate_percent"], 75.0)
+            self.assertEqual(summary["average_response_time_ms"], 200.0)
             self.assertEqual(summary["p95_response_time_ms"], 300.0)
 
     def test_handles_empty_database(self):
@@ -54,12 +49,8 @@ class TestAnalytics(unittest.TestCase):
             summary = summarize_results(db_path=db_path)
 
             self.assertEqual(summary["total_checks"], 0)
-            self.assertEqual(
-                summary["availability_rate_percent"], 0.0
-            )
-            self.assertIsNone(
-                summary["average_response_time_ms"]
-            )
+            self.assertEqual(summary["availability_rate_percent"], 0.0)
+            self.assertIsNone(summary["average_response_time_ms"])
             self.assertIsNone(summary["p95_response_time_ms"])
 
 
