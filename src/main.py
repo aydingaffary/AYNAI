@@ -1,3 +1,6 @@
+import argparse
+from math import isfinite
+
 from aynai.analytics import summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
@@ -42,12 +45,12 @@ def display_results(results: list[dict]) -> None:
         print("-" * 40)
 
 
-def display_analytics() -> None:
+def display_analytics(since_hours: float | None = None) -> None:
     print("\nAYNAI - Monitoring Analytics")
     print("=" * 40)
 
     for url in URLS:
-        summary = summarize_results(url=url)
+        summary = summarize_results(url=url, since_hours=since_hours)
 
         print(f"URL: {url}")
         print(f"Total checks: {summary['total_checks']}")
@@ -70,6 +73,21 @@ def monitor_and_display(urls: list[str], db_path=None) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="AYNAI network monitoring")
+    parser.add_argument(
+        "--analytics-hours",
+        type=float,
+        help="Display analytics for the last N hours without starting monitoring",
+    )
+    args = parser.parse_args()
+
+    if args.analytics_hours is not None:
+        if not isfinite(args.analytics_hours) or args.analytics_hours <= 0:
+            parser.error("--analytics-hours must be a finite number greater than zero")
+
+        display_analytics(since_hours=args.analytics_hours)
+        return
+
     print("Starting AYNAI periodic monitoring...")
     print(f"Check interval: {INTERVAL_SECONDS} seconds")
     print("Press Ctrl+C to stop.")
