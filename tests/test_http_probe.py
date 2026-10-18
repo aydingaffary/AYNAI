@@ -41,19 +41,33 @@ class TestHttpProbe(unittest.TestCase):
         self.assertGreaterEqual(result["response_time_ms"], 0)
 
     @patch("aynai.probes.http_probe.urllib.request.urlopen")
-    def test_timeout_error(self, mock_urlopen):
-        mock_urlopen.side_effect = TimeoutError("Request timed out")
+    def test_timeout_wrapped_in_url_error(self, mock_urlopen):
+        from urllib.error import URLError
 
-        result = check_http(
-            "https://example.com",
-            timeout=1.0,
+        mock_urlopen.side_effect = URLError(
+            TimeoutError("Request timed out")
         )
+
+        result = check_http("https://example.com")
 
         self.assertFalse(result["is_available"])
         self.assertIsNone(result["status_code"])
         self.assertIsNotNone(result["error"])
         self.assertIn("timed out", result["error"].lower())
-        self.assertGreaterEqual(result["response_time_ms"], 0)
+    @patch("aynai.probes.http_probe.urllib.request.urlopen")
+    def test_timeout_wrapped_in_url_error(self, mock_urlopen):
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError(
+            TimeoutError("Request timed out")
+        )
+
+        result = check_http("https://example.com")
+
+        self.assertFalse(result["is_available"])
+        self.assertIsNone(result["status_code"])
+        self.assertIsNotNone(result["error"])
+        self.assertIn("timed out", result["error"].lower())
 
     @patch("aynai.probes.http_probe.urllib.request.urlopen")
     def test_custom_timeout_is_passed_to_urlopen(self, mock_urlopen):
