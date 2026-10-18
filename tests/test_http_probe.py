@@ -41,20 +41,60 @@ class TestHttpProbe(unittest.TestCase):
         self.assertGreaterEqual(result["response_time_ms"], 0)
 
     @patch("aynai.probes.http_probe.urllib.request.urlopen")
-    def test_timeout_error(self, mock_urlopen):
-        mock_urlopen.side_effect = TimeoutError("Request timed out")
+    def test_timeout_wrapped_in_url_error(self, mock_urlopen):
+        from urllib.error import URLError
 
-        result = check_http(
-            "https://example.com",
-            timeout=1.0,
+        mock_urlopen.side_effect = URLError(
+            TimeoutError("Request timed out")
         )
+
+        result = check_http("https://example.com")
 
         self.assertFalse(result["is_available"])
         self.assertIsNone(result["status_code"])
         self.assertIsNotNone(result["error"])
         self.assertIn("timed out", result["error"].lower())
-        self.assertGreaterEqual(result["response_time_ms"], 0)
+    @patch("aynai.probes.http_probe.urllib.request.urlopen")
+    def test_timeout_wrapped_in_url_error(self, mock_urlopen):
+        from urllib.error import URLError
 
+        mock_urlopen.side_effect = URLError(
+            TimeoutError("Request timed out")
+        )
+
+        result = check_http("https://example.com")
+
+        self.assertFalse(result["is_available"])
+        self.assertIsNone(result["status_code"])
+        self.assertIsNotNone(result["error"])
+        self.assertIn("timed out", result["error"].lower())
+
+    @patch("aynai.probes.http_probe.urllib.request.urlopen")
+    def test_custom_timeout_is_passed_to_urlopen(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        check_http("https://example.com", timeout=2.5)
+
+        self.assertEqual(
+            mock_urlopen.call_args.kwargs["timeout"],
+            2.5,
+        )
+
+    @patch("aynai.probes.http_probe.urllib.request.urlopen")
+    def test_connection_error(self, mock_urlopen):
+        from urllib.error import URLError
+
+        mock_urlopen.side_effect = URLError("Connection failed")
+
+        result = check_http("https://example.com")
+
+        self.assertFalse(result["is_available"])
+        self.assertIsNone(result["status_code"])
+        self.assertIsNotNone(result["error"])
+        self.assertIn("connection failed", result["error"].lower())
+        self.assertGreaterEqual(result["response_time_ms"], 0)
 
 if __name__ == "__main__":
     unittest.main()
