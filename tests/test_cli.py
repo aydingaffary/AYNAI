@@ -22,7 +22,7 @@ class TestCommandLineInterface(unittest.TestCase):
     def test_invalid_analytics_hours_are_rejected(
         self, mock_display_analytics, mock_run_periodic_monitoring
     ):
-        invalid_values = ["0", "-1", "nan"]
+        invalid_values = ["0", "-1", "nan", "inf", "abc"]
 
         for value in invalid_values:
             with self.subTest(value=value):
