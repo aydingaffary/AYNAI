@@ -4,7 +4,7 @@ from math import isfinite
 from aynai.analytics import summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
-from aynai.anomaly import analyze_service_latency
+
 
 URLS = [
     "https://example.com",
@@ -12,6 +12,7 @@ URLS = [
 ]
 
 INTERVAL_SECONDS = 30
+
 
 
 def display_results(results: list[dict]) -> None:
@@ -26,23 +27,26 @@ def display_results(results: list[dict]) -> None:
         print(f"Error: {result['error']}")
 
         if result["is_available"]:
-            anomaly = analyze_service_latency(
-                url=result["url"],
-                current_response_time_ms=result["response_time_ms"],
-                exclude_record_id=result.get("record_id"),
-            )
+            anomaly = result.get("anomaly")
 
-            print(f"Latency baseline: {anomaly['baseline_ms']} ms")
-            print(f"Latency MAD: {anomaly['mad_ms']} ms")
-
-            if anomaly["reason"] == "Insufficient historical data":
-                print("Latency anomaly: Not evaluated (insufficient history)")
-            elif anomaly["is_anomaly"]:
-                print("Latency anomaly: DETECTED")
+            if anomaly is None:
+                print("Latency anomaly: Not evaluated")
             else:
-                print("Latency anomaly: No anomaly detected")
+                print(f"Latency baseline: {anomaly['baseline_ms']} ms")
+                print(f"Latency MAD: {anomaly['mad_ms']} ms")
+
+                if anomaly["reason"] == "Insufficient historical data":
+                    print(
+                        "Latency anomaly: "
+                        "Not evaluated (insufficient history)"
+                    )
+                elif anomaly["is_anomaly"]:
+                    print("Latency anomaly: DETECTED")
+                else:
+                    print("Latency anomaly: No anomaly detected")
 
         print("-" * 40)
+
 
 
 def display_analytics(since_hours: float | None = None) -> None:

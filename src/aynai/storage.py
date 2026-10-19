@@ -6,7 +6,7 @@ DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "aynai.db"
 
 
 def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
-    """Create the database and monitoring results table."""
+    """Create the database and migrate its schema when necessary."""
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -21,17 +21,45 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 status_code INTEGER,
                 response_time_ms REAL NOT NULL,
                 error TEXT,
-                checked_at TEXT NOT NULL
+                checked_at TEXT NOT NULL,
+                is_anomaly INTEGER,
+                baseline_ms REAL,
+                mad_ms REAL,
+                anomaly_reason TEXT
             )
-            """)
+        """)
+
+        existing_columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(monitoring_results)"
+            )
+        }
+
+        migrations = {
+            "is_anomaly": "INTEGER",
+            "baseline_ms": "REAL",
+            "mad_ms": "REAL",
+            "anomaly_reason": "TEXT",
+        }
+
+        for column_name, column_type in migrations.items():
+            if column_name not in existing_columns:
+                connection.execute(
+                    f"ALTER TABLE monitoring_results "
+                    f"ADD COLUMN {column_name} {column_type}"
+                )
+
         connection.commit()
     finally:
         connection.close()
 
 
+
 def save_result(
     result: dict,
     db_path: str | Path = DEFAULT_DB_PATH,
+    anomaly: dict | None = None,
 ) -> int:
     """Save one monitoring result to the database."""
     init_db(db_path)
@@ -41,6 +69,7 @@ def save_result(
     connection = sqlite3.connect(db_path)
 
     try:
+
         cursor = connection.execute(
             """
             INSERT INTO monitoring_results (
@@ -49,9 +78,13 @@ def save_result(
                 status_code,
                 response_time_ms,
                 error,
-                checked_at
+                checked_at,
+                is_anomaly,
+                baseline_ms,
+                mad_ms,
+                anomaly_reason
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result["url"],
@@ -60,8 +93,17 @@ def save_result(
                 result["response_time_ms"],
                 result["error"],
                 checked_at,
+                (
+                    int(anomaly["is_anomaly"])
+                    if anomaly is not None
+                    else None
+                ),
+                anomaly["baseline_ms"] if anomaly is not None else None,
+                anomaly["mad_ms"] if anomaly is not None else None,
+                anomaly["reason"] if anomaly is not None else None,
             ),
         )
+
         connection.commit()
         return cursor.lastrowid
     finally:

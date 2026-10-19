@@ -74,6 +74,74 @@ class TestStorage(unittest.TestCase):
         all_results = get_results(db_path=self.db_path)
         self.assertEqual(len(all_results), 2)
 
+    def test_init_db_migrates_existing_database_without_losing_data(self):
+        import sqlite3
+
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        connection = sqlite3.connect(self.db_path)
+
+        try:
+            connection.execute("""
+                CREATE TABLE monitoring_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT NOT NULL,
+                    is_available INTEGER NOT NULL,
+                    status_code INTEGER,
+                    response_time_ms REAL NOT NULL,
+                    error TEXT,
+                    checked_at TEXT NOT NULL
+                )
+            """)
+
+            connection.execute("""
+                INSERT INTO monitoring_results (
+                    url, is_available, status_code,
+                    response_time_ms, error, checked_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                "https://example.com",
+                1,
+                200,
+                120.5,
+                None,
+                "2026-10-19T10:00:00+00:00",
+            ))
+
+            connection.commit()
+        finally:
+            connection.close()
+
+        init_db(self.db_path)
+
+        connection = sqlite3.connect(self.db_path)
+
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(monitoring_results)"
+                )
+            }
+
+            saved_row = connection.execute("""
+                SELECT url, response_time_ms
+                FROM monitoring_results
+                WHERE url = ?
+            """, ("https://example.com",)).fetchone()
+        finally:
+            connection.close()
+
+        self.assertIn("is_anomaly", columns)
+        self.assertIn("baseline_ms", columns)
+        self.assertIn("mad_ms", columns)
+        self.assertIn("anomaly_reason", columns)
+        self.assertEqual(
+            saved_row,
+            ("https://example.com", 120.5),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

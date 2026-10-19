@@ -103,5 +103,52 @@ class TestMonitorServices(unittest.TestCase):
         self.assertEqual(saved_results[0]["is_available"], 1)
 
 
+    @patch("aynai.monitor.analyze_service_latency")
+    @patch("aynai.monitor.check_http")
+    def test_monitor_saves_anomaly_analysis(
+        self,
+        mock_check_http,
+        mock_analyze_service_latency,
+    ):
+        mock_check_http.return_value = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": 500.0,
+            "error": None,
+        }
+
+        mock_analyze_service_latency.return_value = {
+            "is_anomaly": True,
+            "baseline_ms": 120.0,
+            "mad_ms": 10.0,
+            "reason": "Latency above expected range",
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "test.db"
+
+            results = monitor_services(
+                ["https://example.com"],
+                db_path=db_path,
+            )
+
+            saved_results = get_results(
+                url="https://example.com",
+                db_path=db_path,
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(saved_results), 1)
+        self.assertEqual(saved_results[0]["is_anomaly"], 1)
+        self.assertEqual(saved_results[0]["baseline_ms"], 120.0)
+        self.assertEqual(saved_results[0]["mad_ms"], 10.0)
+        self.assertEqual(
+            saved_results[0]["anomaly_reason"],
+            "Latency above expected range",
+        )
+
+
+
 if __name__ == "__main__":
     unittest.main()

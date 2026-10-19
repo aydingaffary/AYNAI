@@ -6,7 +6,6 @@ from aynai.probes.http_probe import check_http
 
 
 class TestHttpProbe(unittest.TestCase):
-
     @patch("aynai.probes.http_probe.urllib.request.urlopen")
     def test_successful_http_response(self, mock_urlopen):
         mock_response = MagicMock()
