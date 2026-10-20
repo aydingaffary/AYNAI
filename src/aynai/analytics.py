@@ -55,3 +55,54 @@ def summarize_results(
         ),
         "p95_response_time_ms": p95_response_time,
     }
+
+
+def summarize_anomalies(
+    url: str | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    since_hours: float | None = None,
+) -> dict:
+    """Summarize detected latency anomalies in stored monitoring results."""
+    if since_hours is not None:
+        if not isfinite(since_hours) or since_hours <= 0:
+            raise ValueError(
+                "since_hours must be finite and greater than zero"
+            )
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+
+        results = [
+            result
+            for result in get_results(url=url, db_path=db_path)
+            if datetime.fromisoformat(
+                result["checked_at"]
+            ).astimezone(timezone.utc) >= cutoff
+        ]
+    else:
+        results = get_results(url=url, db_path=db_path)
+
+    evaluated = [
+        result for result in results
+        if result["is_anomaly"] is not None
+    ]
+
+    anomaly_count = sum(
+        1 for result in evaluated if result["is_anomaly"]
+    )
+    normal_count = len(evaluated) - anomaly_count
+
+    anomaly_rate = (
+        anomaly_count / len(evaluated) * 100
+        if evaluated
+        else 0.0
+    )
+
+    return {
+        "url": url,
+        "total_checks": len(results),
+        "evaluated_checks": len(evaluated),
+        "anomaly_count": anomaly_count,
+        "normal_count": normal_count,
+        "unevaluated_checks": len(results) - len(evaluated),
+        "anomaly_rate_percent": round(anomaly_rate, 2),
+    }
