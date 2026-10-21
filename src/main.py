@@ -1,7 +1,7 @@
 import argparse
 from math import isfinite
 
-from aynai.analytics import summarize_results
+from aynai.analytics import summarize_anomalies, summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
 
@@ -48,21 +48,40 @@ def display_results(results: list[dict]) -> None:
         print("-" * 40)
 
 
-
 def display_analytics(since_hours: float | None = None) -> None:
     print("\nAYNAI - Monitoring Analytics")
     print("=" * 40)
 
     for url in URLS:
         summary = summarize_results(url=url, since_hours=since_hours)
+        anomaly_summary = summarize_anomalies(
+            url=url,
+            since_hours=since_hours,
+        )
 
         print(f"URL: {url}")
         print(f"Total checks: {summary['total_checks']}")
         print(f"Successful: {summary['successful_checks']}")
         print(f"Failed: {summary['failed_checks']}")
-        print("Availability: " f"{summary['availability_rate_percent']}%")
-        print("Average response time: " f"{summary['average_response_time_ms']} ms")
+        print(f"Availability: {summary['availability_rate_percent']}%")
+        print(
+            "Average response time: "
+            f"{summary['average_response_time_ms']} ms"
+        )
         print(f"P95 response time: {summary['p95_response_time_ms']} ms")
+
+        print("\nLatency Anomaly Analytics")
+        print(f"Evaluated checks: {anomaly_summary['evaluated_checks']}")
+        print(f"Anomalies detected: {anomaly_summary['anomaly_count']}")
+        print(f"Normal checks: {anomaly_summary['normal_count']}")
+        print(
+            "Unevaluated checks: "
+            f"{anomaly_summary['unevaluated_checks']}"
+        )
+        print(
+            "Anomaly rate: "
+            f"{anomaly_summary['anomaly_rate_percent']}%"
+        )
         print("-" * 40)
 
 
