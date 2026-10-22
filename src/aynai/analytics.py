@@ -106,3 +106,88 @@ def summarize_anomalies(
         "unevaluated_checks": len(results) - len(evaluated),
         "anomaly_rate_percent": round(anomaly_rate, 2),
     }
+
+
+
+def summarize_anomaly_trends(
+    url: str | None = None,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    since_hours: float = 24,
+    bucket_hours: float = 1,
+) -> dict:
+    """Summarize latency anomalies in consecutive time buckets."""
+    for name, value in (
+        ("since_hours", since_hours),
+        ("bucket_hours", bucket_hours),
+    ):
+        if not isfinite(value) or value <= 0:
+            raise ValueError(
+                f"{name} must be finite and greater than zero"
+            )
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=since_hours)
+
+    results = [
+        result
+        for result in get_results(url=url, db_path=db_path)
+        if cutoff
+        <= datetime.fromisoformat(
+            result["checked_at"]
+        ).astimezone(timezone.utc)
+        <= now
+    ]
+
+    bucket_count = ceil(since_hours / bucket_hours)
+    buckets = []
+
+    for index in range(bucket_count):
+        bucket_start = cutoff + timedelta(hours=index * bucket_hours)
+        bucket_end = min(
+            bucket_start + timedelta(hours=bucket_hours),
+            now,
+        )
+
+        bucket_results = [
+            result
+            for result in results
+            if bucket_start
+            <= datetime.fromisoformat(
+                result["checked_at"]
+            ).astimezone(timezone.utc)
+            < bucket_end
+        ]
+
+        evaluated = [
+            result
+            for result in bucket_results
+            if result["is_anomaly"] is not None
+        ]
+
+        anomaly_count = sum(
+            1 for result in evaluated if result["is_anomaly"]
+        )
+
+        buckets.append({
+            "start": bucket_start.isoformat(),
+            "end": bucket_end.isoformat(),
+            "total_checks": len(bucket_results),
+            "evaluated_checks": len(evaluated),
+            "anomaly_count": anomaly_count,
+            "normal_count": len(evaluated) - anomaly_count,
+            "unevaluated_checks": (
+                len(bucket_results) - len(evaluated)
+            ),
+            "anomaly_rate_percent": (
+                round(anomaly_count / len(evaluated) * 100, 2)
+                if evaluated
+                else None
+            ),
+        })
+
+    return {
+        "url": url,
+        "since_hours": since_hours,
+        "bucket_hours": bucket_hours,
+        "buckets": buckets,
+    }

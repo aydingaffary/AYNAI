@@ -5,7 +5,11 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from aynai.analytics import summarize_anomalies, summarize_results
+from aynai.analytics import (
+    summarize_anomalies,
+    summarize_anomaly_trends,
+    summarize_results,
+)
 from aynai.storage import save_result
 
 
@@ -184,6 +188,118 @@ class TestAnalytics(unittest.TestCase):
                             db_path=db_path,
                             since_hours=invalid_hours,
                         )
+    def test_summarizes_anomaly_trends_across_buckets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "trends.db"
+            now = datetime.now(timezone.utc)
+
+            samples = [
+                (now - timedelta(hours=2), True),
+                (now - timedelta(hours=1), False),
+            ]
+
+            for checked_at, is_anomaly in samples:
+                with patch("aynai.storage.datetime") as mocked_datetime:
+                    mocked_datetime.now.return_value = checked_at
+                    mocked_datetime.timezone = timezone
+
+                    save_result(
+                        {
+                            "url": "https://example.com",
+                            "is_available": True,
+                            "status_code": 200,
+                            "response_time_ms": 150.0,
+                            "error": None,
+                        },
+                        db_path,
+                        anomaly={
+                            "is_anomaly": is_anomaly,
+                            "baseline_ms": 100.0,
+                            "mad_ms": 10.0,
+                            "reason": "Test result",
+                        },
+                    )
+
+            summary = summarize_anomaly_trends(
+                url="https://example.com",
+                db_path=db_path,
+                since_hours=3,
+                bucket_hours=1,
+            )
+
+            self.assertEqual(len(summary["buckets"]), 3)
+            self.assertEqual(summary["buckets"][0]["anomaly_count"], 1)
+            self.assertEqual(summary["buckets"][0]["anomaly_rate_percent"], 100.0)
+            self.assertEqual(summary["buckets"][1]["normal_count"], 1)
+            self.assertEqual(summary["buckets"][1]["anomaly_rate_percent"], 0.0)
+            self.assertEqual(summary["buckets"][2]["total_checks"], 0)
+            self.assertIsNone(summary["buckets"][2]["anomaly_rate_percent"])
+
+    def test_rejects_invalid_trend_windows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "trends.db"
+
+            invalid_values = (0, -1, float("nan"), float("inf"))
+
+            for value in invalid_values:
+                with self.subTest(since_hours=value):
+                    with self.assertRaises(ValueError):
+                        summarize_anomaly_trends(
+                            db_path=db_path,
+                            since_hours=value,
+                        )
+
+                with self.subTest(bucket_hours=value):
+                    with self.assertRaises(ValueError):
+                        summarize_anomaly_trends(
+                            db_path=db_path,
+                            bucket_hours=value,
+                        )
+
+    def test_filters_anomaly_trends_by_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "trends.db"
+            now = datetime.now(timezone.utc)
+
+            for url in ("https://example.com", "https://www.python.org"):
+                with patch("aynai.storage.datetime") as mocked_datetime:
+                    mocked_datetime.now.return_value = now - timedelta(minutes=10)
+                    mocked_datetime.timezone = timezone
+
+                    save_result(
+                        {
+                            "url": url,
+                            "is_available": True,
+                            "status_code": 200,
+                            "response_time_ms": 100.0,
+                            "error": None,
+                        },
+                        db_path,
+                        anomaly={
+                            "is_anomaly": True,
+                            "baseline_ms": 80.0,
+                            "mad_ms": 5.0,
+                            "reason": "Test anomaly",
+                        },
+                    )
+
+            summary = summarize_anomaly_trends(
+                url="https://example.com",
+                db_path=db_path,
+                since_hours=1,
+                bucket_hours=1,
+            )
+
+            self.assertEqual(
+                sum(bucket["total_checks"] for bucket in summary["buckets"]),
+                1,
+            )
+            self.assertEqual(
+                sum(bucket["anomaly_count"] for bucket in summary["buckets"]),
+                1,
+            )
+
+
 
 if __name__ == "__main__":
     unittest.main()
