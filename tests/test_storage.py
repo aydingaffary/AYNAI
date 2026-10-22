@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aynai.storage import get_results, init_db, save_result
+from aynai.storage import (
+    get_results,
+    init_db,
+    save_result,
+    update_labels,
+)
 
 
 class TestStorage(unittest.TestCase):
@@ -296,6 +301,123 @@ class TestStorage(unittest.TestCase):
 
         self.assertEqual(get_results(db_path=self.db_path), [])
 
+
+
+    def test_update_labels_preserves_other_fields(self):
+        result = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": 450.0,
+            "error": None,
+        }
+        record_id = save_result(
+            result,
+            db_path=self.db_path,
+            anomaly={
+                "is_anomaly": True,
+                "baseline_ms": 100.0,
+                "mad_ms": 10.0,
+                "reason": "High latency",
+            },
+            labels={
+                "availability_issue_label": 0,
+            },
+        )
+
+        update_labels(
+            record_id,
+            db_path=self.db_path,
+            latency_anomaly_label=1,
+            label_notes="Confirmed by manual review",
+        )
+
+        saved = get_results(db_path=self.db_path)[0]
+
+        self.assertEqual(saved["latency_anomaly_label"], 1)
+        self.assertEqual(saved["availability_issue_label"], 0)
+        self.assertEqual(
+            saved["label_notes"],
+            "Confirmed by manual review",
+        )
+        self.assertEqual(saved["is_anomaly"], 1)
+        self.assertEqual(saved["baseline_ms"], 100.0)
+
+    def test_update_labels_rejects_missing_record(self):
+        init_db(self.db_path)
+
+        with self.assertRaisesRegex(ValueError, "was not found"):
+            update_labels(
+                999,
+                db_path=self.db_path,
+                latency_anomaly_label=1,
+            )
+
+    def test_update_labels_rejects_invalid_values(self):
+        record_id = save_result(
+            {
+                "url": "https://example.com",
+                "is_available": True,
+                "status_code": 200,
+                "response_time_ms": 120.5,
+                "error": None,
+            },
+            db_path=self.db_path,
+        )
+
+        for value in (2, -1, "1", True, False, 1.0):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    update_labels(
+                        record_id,
+                        db_path=self.db_path,
+                        latency_anomaly_label=value,
+                    )
+
+    def test_update_labels_requires_a_field(self):
+        record_id = save_result(
+            {
+                "url": "https://example.com",
+                "is_available": True,
+                "status_code": 200,
+                "response_time_ms": 120.5,
+                "error": None,
+            },
+            db_path=self.db_path,
+        )
+
+        with self.assertRaisesRegex(ValueError, "At least one"):
+            update_labels(record_id, db_path=self.db_path)
+
+
+    def test_update_labels_can_clear_one_label_without_changing_another(self):
+        record_id = save_result(
+            {
+                "url": "https://example.com",
+                "is_available": True,
+                "status_code": 200,
+                "response_time_ms": 120.5,
+                "error": None,
+            },
+            db_path=self.db_path,
+            labels={
+                "latency_anomaly_label": 1,
+                "availability_issue_label": 0,
+                "label_notes": "Reviewed",
+            },
+        )
+
+        update_labels(
+            record_id,
+            db_path=self.db_path,
+            latency_anomaly_label=None,
+        )
+
+        saved = get_results(db_path=self.db_path)[0]
+
+        self.assertIsNone(saved["latency_anomaly_label"])
+        self.assertEqual(saved["availability_issue_label"], 0)
+        self.assertEqual(saved["label_notes"], "Reviewed")
 
 
 if __name__ == "__main__":
