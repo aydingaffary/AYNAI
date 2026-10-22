@@ -25,7 +25,10 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
                 is_anomaly INTEGER,
                 baseline_ms REAL,
                 mad_ms REAL,
-                anomaly_reason TEXT
+                anomaly_reason TEXT,
+                latency_anomaly_label INTEGER,
+                availability_issue_label INTEGER,
+                label_notes TEXT
             )
         """)
 
@@ -41,6 +44,9 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
             "baseline_ms": "REAL",
             "mad_ms": "REAL",
             "anomaly_reason": "TEXT",
+            "latency_anomaly_label": "INTEGER",
+            "availability_issue_label": "INTEGER",
+            "label_notes": "TEXT",
         }
 
         for column_name, column_type in migrations.items():
@@ -54,22 +60,40 @@ def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
     finally:
         connection.close()
 
-
-
 def save_result(
     result: dict,
     db_path: str | Path = DEFAULT_DB_PATH,
     anomaly: dict | None = None,
+    labels: dict | None = None,
 ) -> int:
-    """Save one monitoring result to the database."""
+    """Save a monitoring result and optional independently verified labels."""
     init_db(db_path)
 
     checked_at = datetime.now(timezone.utc).isoformat()
 
+
+    labels = labels or {}
+
+    for field in (
+        "latency_anomaly_label",
+        "availability_issue_label",
+    ):
+        value = labels.get(field)
+        if value is not None and (
+    type(value) is not int or value not in (0, 1)
+):
+            raise ValueError(
+                f"{field} must be 0, 1, or None"
+            )
+
+    notes = labels.get("label_notes")
+    if notes is not None and not isinstance(notes, str):
+        raise ValueError("label_notes must be a string or None")
+
+
     connection = sqlite3.connect(db_path)
 
     try:
-
         cursor = connection.execute(
             """
             INSERT INTO monitoring_results (
@@ -82,9 +106,12 @@ def save_result(
                 is_anomaly,
                 baseline_ms,
                 mad_ms,
-                anomaly_reason
+                anomaly_reason,
+                latency_anomaly_label,
+                availability_issue_label,
+                label_notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result["url"],
@@ -101,6 +128,9 @@ def save_result(
                 anomaly["baseline_ms"] if anomaly is not None else None,
                 anomaly["mad_ms"] if anomaly is not None else None,
                 anomaly["reason"] if anomaly is not None else None,
+                labels.get("latency_anomaly_label"),
+                labels.get("availability_issue_label"),
+                labels.get("label_notes"),
             ),
         )
 
@@ -108,6 +138,7 @@ def save_result(
         return cursor.lastrowid
     finally:
         connection.close()
+
 
 
 def get_results(
