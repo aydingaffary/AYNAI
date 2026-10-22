@@ -4,6 +4,7 @@ from math import isfinite
 from aynai.analytics import summarize_anomalies, summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
+from aynai.storage import update_labels
 
 
 URLS = [
@@ -97,12 +98,80 @@ def monitor_and_display(urls: list[str], db_path=None) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AYNAI network monitoring")
+
     parser.add_argument(
         "--analytics-hours",
         type=float,
         help="Display analytics for the last N hours without starting monitoring",
     )
+    parser.add_argument(
+        "--label-record",
+        type=int,
+        help="ID of the monitoring record whose labels should be updated",
+    )
+    parser.add_argument(
+        "--latency-label",
+        type=int,
+        choices=(0, 1),
+        help="Set latency anomaly label: 0=normal, 1=anomaly",
+    )
+    parser.add_argument(
+        "--availability-label",
+        type=int,
+        choices=(0, 1),
+        help="Set availability issue label: 0=no issue, 1=issue",
+    )
+    parser.add_argument(
+        "--label-notes",
+        help="Notes explaining the record labels",
+    )
     args = parser.parse_args()
+    if args.analytics_hours is not None and args.label_record is not None:
+        parser.error(
+            "--analytics-hours and --label-record cannot be used together"
+        )
+
+    label_options = (
+        args.latency_label,
+        args.availability_label,
+        args.label_notes,
+    )
+
+    if args.label_record is None and any(
+        value is not None for value in label_options
+    ):
+        parser.error(
+            "--latency-label, --availability-label, and --label-notes "
+            "require --label-record"
+        )
+
+    if args.label_record is not None:
+        if args.label_record <= 0:
+            parser.error("--label-record must be a positive integer")
+
+        if not any(value is not None for value in label_options):
+            parser.error(
+                "--label-record requires at least one label option"
+            )
+
+        updates = {}
+
+        if args.latency_label is not None:
+            updates["latency_anomaly_label"] = args.latency_label
+
+        if args.availability_label is not None:
+            updates["availability_issue_label"] = args.availability_label
+
+        if args.label_notes is not None:
+            updates["label_notes"] = args.label_notes
+
+        try:
+            update_labels(args.label_record, **updates)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        print(f"Updated labels for record {args.label_record}.")
+        return
 
     if args.analytics_hours is not None:
         if not isfinite(args.analytics_hours) or args.analytics_hours <= 0:

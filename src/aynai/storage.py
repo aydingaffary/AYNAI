@@ -172,3 +172,68 @@ def get_results(
         return [dict(row) for row in cursor.fetchall()]
     finally:
         connection.close()
+
+
+_UNSET = object()
+
+
+def update_labels(
+    record_id: int,
+    db_path: str | Path = DEFAULT_DB_PATH,
+    *,
+    latency_anomaly_label: int | None | object = _UNSET,
+    availability_issue_label: int | None | object = _UNSET,
+    label_notes: str | None | object = _UNSET,
+) -> None:
+    """Update independently verified labels for an existing record."""
+    if type(record_id) is not int or record_id <= 0:
+        raise ValueError("record_id must be a positive integer")
+
+    updates = {
+        "latency_anomaly_label": latency_anomaly_label,
+        "availability_issue_label": availability_issue_label,
+        "label_notes": label_notes,
+    }
+
+    for field in (
+        "latency_anomaly_label",
+        "availability_issue_label",
+    ):
+        value = updates[field]
+        if value is not _UNSET and value is not None and (
+            type(value) is not int or value not in (0, 1)
+        ):
+            raise ValueError(f"{field} must be 0, 1, or None")
+
+    notes = updates["label_notes"]
+    if notes is not _UNSET and notes is not None and not isinstance(notes, str):
+        raise ValueError("label_notes must be a string or None")
+
+    fields = [
+        field
+        for field, value in updates.items()
+        if value is not _UNSET
+    ]
+
+    if not fields:
+        raise ValueError("At least one label field must be provided")
+
+    assignments = ", ".join(f"{field} = ?" for field in fields)
+    values = [updates[field] for field in fields]
+
+    init_db(db_path)
+    connection = sqlite3.connect(db_path)
+
+    try:
+        cursor = connection.execute(
+            f"UPDATE monitoring_results SET {assignments} WHERE id = ?",
+            (*values, record_id),
+        )
+
+        if cursor.rowcount == 0:
+            connection.rollback()
+            raise ValueError(f"Monitoring record {record_id} was not found")
+
+        connection.commit()
+    finally:
+        connection.close()
