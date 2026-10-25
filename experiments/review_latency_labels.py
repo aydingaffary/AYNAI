@@ -1,6 +1,6 @@
-
 """Review latency measurements and record independent human labels."""
 
+import argparse
 from pathlib import Path
 import sys
 
@@ -26,7 +26,8 @@ def load_review_candidates(db_path: Path) -> tuple[list[dict], list[dict]]:
     ]
 
     unlabeled = [
-        row for row in successful
+        row
+        for row in successful
         if row["latency_anomaly_label"] is None
     ]
 
@@ -52,7 +53,6 @@ def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
     """Interactively label up to ten previously unlabeled records."""
     successful, candidates = load_review_candidates(db_path)
 
-
     if not candidates:
         print("No unlabeled successful measurements remain.")
         return
@@ -73,8 +73,20 @@ def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
     batch = eligible[:BATCH_SIZE]
 
     print(f"Reviewing {len(batch)} records.")
-    print("Labels: 0 = normal, 1 = latency anomaly, s = skip, q = quit")
-    print("Algorithm predictions are intentionally hidden.")
+    print("\nLabeling guidelines:")
+    print("  0 = Normal: latency appears consistent with prior measurements.")
+    print("  1 = Anomaly: latency is clearly and unusually elevated.")
+    print("  s = Skip: evidence is insufficient to make a confident decision.")
+    print("  q = Quit: stop reviewing without labeling the current record.")
+    print(
+        "\nConsider the size of the increase and variation in the "
+        "previous measurements."
+    )
+    print(
+        "These labels reflect human judgment about latency, "
+        "not proof of a network fault."
+    )
+    print("\nAlgorithm predictions are intentionally hidden.")
 
     saved = 0
 
@@ -94,9 +106,6 @@ def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
                 f"  ID {row['id']}: "
                 f"{row['response_time_ms']} ms at {row['checked_at']}"
             )
-
-        if len(history) < HISTORY_SIZE:
-            print("Note: fewer than five earlier successful measurements.")
 
         while True:
             choice = input("Your label [0/1/s/q]: ").strip().lower()
@@ -128,5 +137,20 @@ def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
     print(f"\nReview complete. Labels saved in this run: {saved}")
 
 
+def main() -> None:
+    """Parse command-line arguments and run the label reviewer."""
+    parser = argparse.ArgumentParser(
+        description="Review successful HTTP measurements and label latency anomalies."
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="Path to the SQLite database (default: AYNAI's configured database).",
+    )
+    args = parser.parse_args()
+    review_batch(db_path=args.db)
+
+
 if __name__ == "__main__":
-    review_batch()
+    main()
