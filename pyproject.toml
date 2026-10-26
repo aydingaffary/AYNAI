@@ -19,3 +19,6 @@ test = [
     "pandas",
     "scikit-learn",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
