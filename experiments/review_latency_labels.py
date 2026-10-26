@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from aynai.storage import DEFAULT_DB_PATH, get_results, update_labels
 
-BATCH_SIZE = 10
+DEFAULT_BATCH_SIZE = 10
 HISTORY_SIZE = 5
 
 
@@ -49,7 +49,10 @@ def format_history(
     return earlier[-HISTORY_SIZE:]
 
 
-def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
+def review_batch(
+    db_path: Path = DEFAULT_DB_PATH,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> None:
     """Interactively label up to ten previously unlabeled records."""
     successful, candidates = load_review_candidates(db_path)
 
@@ -70,7 +73,7 @@ def review_batch(db_path: Path = DEFAULT_DB_PATH) -> None:
         )
         return
 
-    batch = eligible[:BATCH_SIZE]
+    batch = eligible[:batch_size]
 
     print(f"Reviewing {len(batch)} records.")
     print("\nLabeling guidelines:")
@@ -150,6 +153,30 @@ def main() -> None:
     )
     args = parser.parse_args()
     review_batch(db_path=args.db)
+
+def main() -> None:
+    """Parse command-line arguments and run the label reviewer."""
+    parser = argparse.ArgumentParser(
+        description="Review successful HTTP measurements and label latency anomalies."
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="Path to the SQLite database (default: AYNAI's configured database).",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help="Number of records to review (default: 10).",
+    )
+    args = parser.parse_args()
+
+    if args.batch_size < 1:
+        parser.error("--batch-size must be at least 1")
+
+    review_batch(db_path=args.db, batch_size=args.batch_size)
 
 
 if __name__ == "__main__":
