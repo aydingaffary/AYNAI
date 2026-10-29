@@ -48,6 +48,48 @@ class TestStorage(unittest.TestCase):
         self.assertIsNone(results[0]["error"])
         self.assertIsNotNone(results[0]["checked_at"])
 
+
+    def test_rejects_negative_response_time(self):
+        result = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": -1.0,
+            "error": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "response_time_ms"):
+            save_result(result, self.db_path)
+
+        self.assertEqual(get_results(db_path=self.db_path), [])
+
+    def test_rejects_nan_response_time(self):
+        result = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": float("nan"),
+            "error": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "response_time_ms"):
+            save_result(result, self.db_path)
+
+        self.assertEqual(get_results(db_path=self.db_path), [])
+
+    def test_rejects_infinite_response_time(self):
+        result = {
+            "url": "https://example.com",
+            "is_available": True,
+            "status_code": 200,
+            "response_time_ms": float("inf"),
+            "error": None,
+        }
+
+        with self.assertRaisesRegex(ValueError, "response_time_ms"):
+            save_result(result, self.db_path)
+
+        self.assertEqual(get_results(db_path=self.db_path), [])
     def test_results_can_be_filtered_by_url(self):
         first = {
             "url": "https://example.com",

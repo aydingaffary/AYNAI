@@ -1,9 +1,9 @@
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "aynai.db"
-
 
 def init_db(db_path: str | Path = DEFAULT_DB_PATH) -> None:
     """Create the database and migrate its schema when necessary."""
@@ -71,6 +71,17 @@ def save_result(
 
     checked_at = datetime.now(timezone.utc).isoformat()
 
+    response_time_ms = result.get("response_time_ms")
+
+    if (
+        isinstance(response_time_ms, bool)
+        or not isinstance(response_time_ms, (int, float))
+        or not math.isfinite(response_time_ms)
+        or response_time_ms < 0
+    ):
+        raise ValueError(
+            "response_time_ms must be a finite, non-negative number"
+        )
 
     labels = labels or {}
 
