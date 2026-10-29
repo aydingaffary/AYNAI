@@ -31,12 +31,24 @@ def load_monitoring_data(db_path: str | Path) -> pd.DataFrame:
     if data.empty:
         return data
 
-    data = data.loc[
-        data["response_time_ms"].notna()
-        & (data["is_available"] == 1)
-    ].copy()
+    data["checked_at"] = pd.to_datetime(
+        data["checked_at"], utc=True, errors="coerce"
+    )
+    data["response_time_ms"] = pd.to_numeric(
+        data["response_time_ms"], errors="coerce"
+    )
 
-    data["checked_at"] = pd.to_datetime(data["checked_at"], utc=True)
+    valid_measurements = (
+        data["response_time_ms"].notna()
+        & data["response_time_ms"].map(
+            lambda value: pd.notna(value) and abs(value) != float("inf")
+        )
+        & (data["response_time_ms"] >= 0)
+        & (data["is_available"] == 1)
+        & data["checked_at"].notna()
+    )
+
+    data = data.loc[valid_measurements].copy()
     return data.sort_values(["url", "checked_at", "id"])
 
 

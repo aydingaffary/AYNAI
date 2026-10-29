@@ -8,7 +8,7 @@ from sklearn.metrics import (
     recall_score,
 )
 
-from evaluate_labeled_anomalies import (
+from experiments.evaluate_labeled_anomalies import (
     DB_PATH,
     HISTORY_LIMIT,
     MIN_HISTORY,
@@ -30,8 +30,23 @@ def evaluate_threshold(data: pd.DataFrame, threshold: float) -> dict:
         history = []
 
         for _, row in service.iterrows():
-            latency = float(row["response_time_ms"])
+            latency = row["response_time_ms"]
             label = row["latency_anomaly_label"]
+            is_available = row["is_available"]
+            checked_at = row["checked_at"]
+
+            valid_measurement = (
+                pd.notna(latency)
+                and pd.notna(is_available)
+                and int(is_available) == 1
+                and float(latency) >= 0
+                and pd.notna(checked_at)
+            )
+
+            if not valid_measurement:
+                continue
+
+            latency = float(latency)
 
             if pd.notna(label) and len(history) >= MIN_HISTORY:
                 result = detect_latency_anomaly(
@@ -43,7 +58,7 @@ def evaluate_threshold(data: pd.DataFrame, threshold: float) -> dict:
                 predicted.append(int(result["is_anomaly"]))
                 evaluated_records += 1
 
-            # Unlabeled records remain part of the historical baseline.
+            # Only valid successful measurements enter future history.
             history.append(latency)
 
     if not actual:
