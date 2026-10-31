@@ -79,11 +79,24 @@ def analyze_service_latency(
     else:
         historical_results = results
 
-    historical_times = [
-        float(result["response_time_ms"])
-        for result in historical_results
-        if result["is_available"]
-    ][:history_limit]
+    historical_times = []
+
+    for result in historical_results:
+        if not result["is_available"]:
+            continue
+
+        try:
+            response_time = float(result["response_time_ms"])
+        except (TypeError, ValueError):
+            continue
+
+        if not math.isfinite(response_time) or response_time < 0:
+            continue
+
+        historical_times.append(response_time)
+
+        if len(historical_times) >= history_limit:
+            break
 
     return detect_latency_anomaly(
         current_response_time_ms=current_response_time_ms,

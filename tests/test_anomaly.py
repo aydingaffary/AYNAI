@@ -181,5 +181,63 @@ class TestLatencyAnomaly(unittest.TestCase):
         self.assertEqual(result["reason"], "Insufficient historical data")
 
 
+    @patch("aynai.anomaly.get_results")
+    def test_ignores_non_finite_historical_values(self, mock_get_results):
+        mock_get_results.return_value = [
+            {"id": 8, "is_available": 1, "response_time_ms": 100.0},
+            {"id": 7, "is_available": 1, "response_time_ms": float("nan")},
+            {"id": 6, "is_available": 1, "response_time_ms": float("inf")},
+            {"id": 5, "is_available": 1, "response_time_ms": 102.0},
+            {"id": 4, "is_available": 1, "response_time_ms": 98.0},
+            {"id": 3, "is_available": 1, "response_time_ms": 101.0},
+            {"id": 2, "is_available": 1, "response_time_ms": 99.0},
+        ]
+
+        result = analyze_service_latency(
+            url="https://example.com",
+            current_response_time_ms=500.0,
+        )
+
+        self.assertTrue(result["is_anomaly"])
+        self.assertEqual(result["baseline_ms"], 100.0)
+
+    @patch("aynai.anomaly.get_results")
+    def test_ignores_negative_historical_values(self, mock_get_results):
+        mock_get_results.return_value = [
+            {"id": 7, "is_available": 1, "response_time_ms": 100.0},
+            {"id": 6, "is_available": 1, "response_time_ms": -50.0},
+            {"id": 5, "is_available": 1, "response_time_ms": 102.0},
+            {"id": 4, "is_available": 1, "response_time_ms": 98.0},
+            {"id": 3, "is_available": 1, "response_time_ms": 101.0},
+            {"id": 2, "is_available": 1, "response_time_ms": 99.0},
+        ]
+
+        result = analyze_service_latency(
+            url="https://example.com",
+            current_response_time_ms=500.0,
+        )
+
+        self.assertTrue(result["is_anomaly"])
+        self.assertEqual(result["baseline_ms"], 100.0)
+
+    @patch("aynai.anomaly.get_results")
+    def test_ignores_non_numeric_historical_values(self, mock_get_results):
+        mock_get_results.return_value = [
+            {"id": 7, "is_available": 1, "response_time_ms": 100.0},
+            {"id": 6, "is_available": 1, "response_time_ms": "invalid"},
+            {"id": 5, "is_available": 1, "response_time_ms": 102.0},
+            {"id": 4, "is_available": 1, "response_time_ms": 98.0},
+            {"id": 3, "is_available": 1, "response_time_ms": 101.0},
+            {"id": 2, "is_available": 1, "response_time_ms": 99.0},
+        ]
+
+        result = analyze_service_latency(
+            url="https://example.com",
+            current_response_time_ms=500.0,
+        )
+
+        self.assertTrue(result["is_anomaly"])
+        self.assertEqual(result["baseline_ms"], 100.0)
+
 if __name__ == "__main__":
     unittest.main()
