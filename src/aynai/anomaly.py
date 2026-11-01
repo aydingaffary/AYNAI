@@ -67,9 +67,13 @@ def analyze_service_latency(
     exclude_record_id: int | None = None,
 ) -> dict:
     """Compare current latency with previous successful checks."""
-    if history_limit < 5:
-        raise ValueError("history_limit must be at least 5")
-
+    if (
+    isinstance(history_limit, bool)
+    or not isinstance(history_limit, int)
+    or history_limit < 5
+):
+        raise ValueError("history_limit must be an integer of at least 5")
+    
     results = get_results(url=url, db_path=db_path)
 
     if exclude_record_id is not None:

@@ -238,6 +238,49 @@ class TestLatencyAnomaly(unittest.TestCase):
 
         self.assertTrue(result["is_anomaly"])
         self.assertEqual(result["baseline_ms"], 100.0)
+    @patch("aynai.anomaly.get_results")
+    def test_rejects_history_limit_below_five(self, mock_get_results):
+        with self.assertRaises(ValueError):
+            analyze_service_latency(
+                url="https://example.com",
+                current_response_time_ms=100.0,
+                history_limit=4,
+            )
+
+        mock_get_results.assert_not_called()
+
+    @patch("aynai.anomaly.get_results")
+    def test_rejects_non_integer_history_limit(self, mock_get_results):
+        for value in (5.5, "10", None):
+            with self.subTest(history_limit=value):
+                with self.assertRaises(ValueError):
+                    analyze_service_latency(
+                        url="https://example.com",
+                        current_response_time_ms=100.0,
+                        history_limit=value,
+                    )
+
+        mock_get_results.assert_not_called()
+
+    @patch("aynai.anomaly.get_results")
+    def test_accepts_history_limit_of_five(self, mock_get_results):
+        mock_get_results.return_value = [
+            {"id": 5, "is_available": 1, "response_time_ms": 100.0},
+            {"id": 4, "is_available": 1, "response_time_ms": 102.0},
+            {"id": 3, "is_available": 1, "response_time_ms": 98.0},
+            {"id": 2, "is_available": 1, "response_time_ms": 101.0},
+            {"id": 1, "is_available": 1, "response_time_ms": 99.0},
+        ]
+
+        result = analyze_service_latency(
+            url="https://example.com",
+            current_response_time_ms=105.0,
+            history_limit=5,
+        )
+
+        self.assertEqual(result["baseline_ms"], 100.0)
+        self.assertFalse(result["is_anomaly"])
+
 
 if __name__ == "__main__":
     unittest.main()
