@@ -1,6 +1,6 @@
 import argparse
 from math import isfinite
-
+from aynai.quality import analyze_data_quality
 from aynai.analytics import summarize_anomalies, summarize_results
 from aynai.monitor import monitor_services
 from aynai.scheduler import run_periodic_monitoring
@@ -85,6 +85,27 @@ def display_analytics(since_hours: float | None = None) -> None:
         )
         print("-" * 40)
 
+def display_quality_report() -> None:
+    print("\nAYNAI - Data Quality Report")
+    print("=" * 40)
+
+    for url in URLS:
+        report = analyze_data_quality(url=url)
+
+        print(f"URL: {report['url']}")
+        print(f"Total records: {report['total_records']}")
+        print(f"Successful records: {report['successful_records']}")
+        print(f"Failed records: {report['failed_records']}")
+        print(f"Valid latency records: {report['valid_latency_records']}")
+        print(f"Invalid latency records: {report['invalid_latency_records']}")
+        print(f"Analyzed records: {report['analyzed_records']}")
+        print(f"Labeled records: {report['labeled_records']}")
+        print(
+            "History sufficient: "
+            f"{report['history_sufficient']}"
+        )
+        print("-" * 40)
+
 
 def monitor_and_display(urls: list[str], db_path=None) -> None:
     if db_path is None:
@@ -104,6 +125,11 @@ def main() -> None:
         type=float,
         help="Display analytics for the last N hours without starting monitoring",
     )
+    parser.add_argument(
+    "--quality-report",
+    action="store_true",
+    help="Display data quality reports without starting monitoring",
+)
     parser.add_argument(
         "--label-record",
         type=int,
@@ -126,6 +152,14 @@ def main() -> None:
         help="Notes explaining the record labels",
     )
     args = parser.parse_args()
+    if args.quality_report and (
+        args.analytics_hours is not None
+        or args.label_record is not None
+        or args.latency_label is not None
+        or args.availability_label is not None
+        or args.label_notes is not None
+    ):
+        parser.error("--quality-report cannot be combined with other operations")
     if args.analytics_hours is not None and args.label_record is not None:
         parser.error(
             "--analytics-hours and --label-record cannot be used together"
@@ -178,6 +212,10 @@ def main() -> None:
             parser.error("--analytics-hours must be a finite number greater than zero")
 
         display_analytics(since_hours=args.analytics_hours)
+        return
+
+    if args.quality_report:
+        display_quality_report()
         return
 
     print("Starting AYNAI periodic monitoring...")
