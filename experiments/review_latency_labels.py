@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 import sys
-
+from statistics import median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -109,7 +109,24 @@ def review_batch(
                 f"  ID {row['id']}: "
                 f"{row['response_time_ms']} ms at {row['checked_at']}"
             )
+        history_times = [
+            row["response_time_ms"]
+            for row in history
+        ]
 
+        history_median = median(history_times)
+        history_min = min(history_times)
+        history_max = max(history_times)
+
+        current_latency = current["response_time_ms"]
+        latency_difference = current_latency - history_median
+
+        print("\nHistorical statistics:")
+        print(f"  Median: {history_median:.2f} ms")
+        print(f"  Minimum: {history_min:.2f} ms")
+        print(f"  Maximum: {history_max:.2f} ms")
+        print(f"  Current latency: {current_latency:.2f} ms")
+        print(f"  Difference from median: {latency_difference:+.2f} ms")
         while True:
             choice = input("Your label [0/1/s/q]: ").strip().lower()
 
@@ -140,19 +157,7 @@ def review_batch(
     print(f"\nReview complete. Labels saved in this run: {saved}")
 
 
-def main() -> None:
-    """Parse command-line arguments and run the label reviewer."""
-    parser = argparse.ArgumentParser(
-        description="Review successful HTTP measurements and label latency anomalies."
-    )
-    parser.add_argument(
-        "--db",
-        type=Path,
-        default=DEFAULT_DB_PATH,
-        help="Path to the SQLite database (default: AYNAI's configured database).",
-    )
-    args = parser.parse_args()
-    review_batch(db_path=args.db)
+
 
 def main() -> None:
     """Parse command-line arguments and run the label reviewer."""
