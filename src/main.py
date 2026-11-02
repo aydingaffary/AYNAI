@@ -100,12 +100,31 @@ def display_quality_report() -> None:
         print(f"Invalid latency records: {report['invalid_latency_records']}")
         print(f"Analyzed records: {report['analyzed_records']}")
         print(f"Labeled records: {report['labeled_records']}")
+        print(f"Latency labeled records: {report['latency_labeled_records']}")
+        print(
+            "Availability labeled records: "
+            f"{report['availability_labeled_records']}"
+        )
+        print(f"Unlabeled records: {report['unlabeled_records']}")
+
+        print(
+            f"Latency label coverage: "
+            f"{report['latency_label_coverage']:.2f}%"
+        )
+        print(
+            f"Availability label coverage: "
+            f"{report['availability_label_coverage']:.2f}%"
+        )
+        print(
+            f"Overall label coverage: "
+            f"{report['overall_label_coverage']:.2f}%"
+        )
+
         print(
             "History sufficient: "
             f"{report['history_sufficient']}"
         )
         print("-" * 40)
-
 
 def monitor_and_display(urls: list[str], db_path=None) -> None:
     if db_path is None:

@@ -132,3 +132,32 @@ def test_history_is_insufficient_with_four_valid_records(monkeypatch):
 
     assert report["valid_latency_records"] == 4
     assert report["history_sufficient"] is False
+
+
+def test_label_coverage_counts_and_percentages_correctly(monkeypatch):
+    records = [
+        make_record(latency_anomaly_label=0),
+        make_record(availability_issue_label=1),
+        make_record(
+            latency_anomaly_label=1,
+            availability_issue_label=0,
+        ),
+        make_record(),
+    ]
+
+    monkeypatch.setattr(
+        "aynai.quality.get_results",
+        lambda **kwargs: records,
+    )
+
+    report = analyze_data_quality("https://example.com")
+
+    assert report["total_records"] == 4
+    assert report["latency_labeled_records"] == 2
+    assert report["availability_labeled_records"] == 2
+    assert report["labeled_records"] == 3
+    assert report["unlabeled_records"] == 1
+
+    assert report["latency_label_coverage"] == 50.0
+    assert report["availability_label_coverage"] == 50.0
+    assert report["overall_label_coverage"] == 75.0
