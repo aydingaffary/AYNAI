@@ -52,7 +52,15 @@ def load_monitoring_data(db_path: str | Path) -> pd.DataFrame:
     return data.sort_values(["url", "checked_at", "id"])
 
 
-def evaluate_labeled_records(data: pd.DataFrame) -> dict:
+def evaluate_labeled_records(
+    data: pd.DataFrame,
+    history_limit: int = HISTORY_LIMIT,
+) -> dict:
+    if isinstance(history_limit, bool) or not isinstance(history_limit, int):
+        raise ValueError("history_limit must be an integer")
+
+    if history_limit < MIN_HISTORY:
+        raise ValueError(f"history_limit must be at least {MIN_HISTORY}")
     """Evaluate labeled records using only prior measurements."""
     if data.empty:
         return {
@@ -84,7 +92,7 @@ def evaluate_labeled_records(data: pd.DataFrame) -> dict:
             if pd.notna(label) and len(history) >= MIN_HISTORY:
                 result = detect_latency_anomaly(
                     latency,
-                    history[-HISTORY_LIMIT:],
+                    history[-history_limit:],
                 )
                 actual.append(int(label))
                 predicted.append(int(result["is_anomaly"]))
@@ -113,6 +121,7 @@ def evaluate_labeled_records(data: pd.DataFrame) -> dict:
         "precision": precision_score(actual, predicted, zero_division=0),
         "recall": recall_score(actual, predicted, zero_division=0),
         "f1": f1_score(actual, predicted, zero_division=0),
+             "history_limit": history_limit,
         "confusion_matrix": matrix.tolist(),
         "confusion_matrix_labels": ["actual_normal", "actual_anomaly"],
     }

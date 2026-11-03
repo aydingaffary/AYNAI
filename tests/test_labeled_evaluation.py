@@ -59,10 +59,60 @@ class TestLabeledEvaluation(unittest.TestCase):
             result = evaluate_labeled_records(data)
 
         self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["history_limit"], 100)
         self.assertEqual(result["precision"], 1.0)
         self.assertEqual(result["recall"], 1.0)
         self.assertEqual(result["f1"], 1.0)
         self.assertEqual(result["confusion_matrix"], [[1, 0], [0, 1]])
+    
+    def test_history_limit_uses_only_latest_observations(self):
+        data = pd.DataFrame(
+            {
+                "id": range(1, 13),
+                "url": ["https://example.com"] * 12,
+                "checked_at": pd.date_range(
+                    "2026-01-01",
+                    periods=12,
+                    freq="h",
+                    tz="UTC",
+                ),
+                "response_time_ms": list(range(10, 22)),
+                "is_available": [1] * 12,
+                "latency_anomaly_label": [None] * 10 + [1, 0],
+            }
+        )
+
+        with patch(
+            "experiments.evaluate_labeled_anomalies.detect_latency_anomaly",
+            return_value={"is_anomaly": True},
+        ) as detector:
+            evaluate_labeled_records(data, history_limit=5)
+
+        first_history = detector.call_args_list[0].args[1]
+        self.assertEqual(first_history, [15, 16, 17, 18, 19])
+
+    def test_default_history_limit_is_100(self):
+        data = self.make_data()
+
+        with patch(
+            "experiments.evaluate_labeled_anomalies.detect_latency_anomaly",
+            return_value={"is_anomaly": True},
+        ):
+            result = evaluate_labeled_records(data)
+
+        self.assertEqual(result["history_limit"], 100)
+
+    def test_invalid_history_limit_raises_value_error(self):
+        data = self.make_data()
+
+        for invalid_limit in (4, True, 5.0):
+            with self.subTest(history_limit=invalid_limit):
+                with self.assertRaises(ValueError):
+                    evaluate_labeled_records(
+                        data,
+                        history_limit=invalid_limit,
+                    )
+
 
     def test_no_labels_returns_insufficient_labels(self):
         data = self.make_data()
