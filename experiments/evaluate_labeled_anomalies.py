@@ -56,12 +56,13 @@ def evaluate_labeled_records(
     data: pd.DataFrame,
     history_limit: int = HISTORY_LIMIT,
 ) -> dict:
+    """Evaluate labeled records using only prior measurements."""
     if isinstance(history_limit, bool) or not isinstance(history_limit, int):
         raise ValueError("history_limit must be an integer")
 
     if history_limit < MIN_HISTORY:
         raise ValueError(f"history_limit must be at least {MIN_HISTORY}")
-    """Evaluate labeled records using only prior measurements."""
+
     if data.empty:
         return {
             "status": "no_data",
@@ -121,7 +122,7 @@ def evaluate_labeled_records(
         "precision": precision_score(actual, predicted, zero_division=0),
         "recall": recall_score(actual, predicted, zero_division=0),
         "f1": f1_score(actual, predicted, zero_division=0),
-             "history_limit": history_limit,
+        "history_limit": history_limit,
         "confusion_matrix": matrix.tolist(),
         "confusion_matrix_labels": ["actual_normal", "actual_anomaly"],
     }
