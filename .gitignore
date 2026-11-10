@@ -28,3 +28,6 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.log
+
+# Generated Edge AI datasets
+data/edge_ai/datasets/
