@@ -221,7 +221,7 @@ class StructuralInspector:
         """Inspect one seed independently."""
 
         try:
-            dataset = self.loader.load_seed_dataset(seed)
+            dataset = self.loader.load_seed_dataset(seed, check_manifest_files=False)
         except (DatasetLoadError, OSError, ValueError) as exc:
             return SeedInspectionStatus(
                 seed=seed,
@@ -244,7 +244,7 @@ class StructuralInspector:
     def inspect(self) -> StructuralInspectionReport:
         """Inspect all configured seeds and aggregate structural results."""
 
-        manifest = self.loader.validate_manifest()
+        manifest = self.loader.validate_manifest(check_files=False)
 
         if not manifest.is_valid:
             return StructuralInspectionReport(

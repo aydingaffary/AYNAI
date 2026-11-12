@@ -247,6 +247,10 @@ class TestStructuralInspector(unittest.TestCase):
             "seed_1000/evaluation/normal.csv",
             timestamps,
         )
+        self._rewrite_timestamps(
+            "seed_1000/ground_truth/normal.csv",
+            timestamps,
+        )
 
         result = self._inspector().inspect_seed(1000)
 
@@ -277,6 +281,10 @@ class TestStructuralInspector(unittest.TestCase):
         )
         self._rewrite_timestamps(
             "seed_1000/evaluation/normal.csv",
+            timestamps,
+        )
+        self._rewrite_timestamps(
+            "seed_1000/ground_truth/normal.csv",
             timestamps,
         )
 

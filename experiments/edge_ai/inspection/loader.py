@@ -43,7 +43,11 @@ class DatasetLoader:
         self.experiment_config = experiment_config
         self.experiment_config.validate()
 
-    def _safe_path(self, relative_path: object) -> Path:
+    def _safe_path(
+        self,
+        relative_path: object,
+        require_exists: bool = True,
+    ) -> Path:
         """Resolve a manifest path without allowing root escape."""
         if not isinstance(relative_path, str) or not relative_path.strip():
             raise DatasetLoadError("Manifest contains an empty file path")
@@ -62,7 +66,7 @@ class DatasetLoader:
                 f"Manifest path escapes dataset directory: {relative_path}"
             )
 
-        if not resolved.is_file():
+        if require_exists and not resolved.is_file():
             raise DatasetLoadError(
                 f"Dataset file does not exist: {relative_path}"
             )
@@ -79,7 +83,10 @@ class DatasetLoader:
 
         return path
 
-    def validate_manifest(self) -> ManifestValidationResult:
+    def validate_manifest(
+        self,
+        check_files: bool = True,
+    ) -> ManifestValidationResult:
         """Validate manifest schema, coverage, paths, and sample counts."""
         expected_seeds = self.experiment_config.seeds
         errors: list[str] = []
@@ -233,7 +240,10 @@ class DatasetLoader:
                 "events_file",
             ):
                 try:
-                    self._safe_path(getattr(row, column))
+                    self._safe_path(
+                        getattr(row, column),
+                        require_exists=check_files,
+                    )
                 except DatasetLoadError as exc:
                     errors.append(
                         f"Seed {seed}, scenario {scenario}, "
@@ -672,12 +682,18 @@ class DatasetLoader:
             events=events,
         )
 
-    def load_seed_dataset(self, seed: int) -> SeedDataset:
+    def load_seed_dataset(
+        self,
+        seed: int,
+        check_manifest_files: bool = True,
+    ) -> SeedDataset:
         """Validate the manifest and load one complete seed."""
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("seed must be an integer")
 
-        result = self.validate_manifest()
+        result = self.validate_manifest(
+            check_files=check_manifest_files
+        )
 
         if not result.is_valid:
             raise DatasetLoadError(
