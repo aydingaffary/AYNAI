@@ -27,6 +27,8 @@ class SeedDataset:
     events: pd.DataFrame
 
 
+
+
 @dataclass(frozen=True)
 class ManifestValidationResult:
     """Structural validation summary for the dataset manifest."""
@@ -53,5 +55,18 @@ class SeedInspectionStatus:
 
     seed: int
     status: InspectionStatus
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+@dataclass(frozen=True)
+class StructuralInspectionReport:
+    """Aggregated structural inspection results across experiment seeds."""
+
+    status: InspectionStatus
+    seeds_inspected: int
+    datasets_inspected: int
+    passed_checks: int
+    warning_checks: int
+    failed_checks: int
+    seed_results: tuple[SeedInspectionStatus, ...]
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
