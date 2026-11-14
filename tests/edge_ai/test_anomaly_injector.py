@@ -201,7 +201,27 @@ class TestAnomalyInjector(unittest.TestCase):
         )
 
         for event, multiplier in zip(events, (2.0, 3.0)):
-            expected = np.linspace(1.0, multiplier, 60)
+            start_multiplier = 1.0 + (multiplier - 1.0) / 59
+
+            expected = np.linspace(
+                start_multiplier,
+                multiplier,
+                60,
+            )
+
+            self.assertEqual(len(expected), 60)
+            self.assertGreater(expected[0], 1.0)
+            self.assertAlmostEqual(expected[-1], multiplier)
+            self.assertTrue(np.all(np.diff(expected) > 0))
+
+            self.assertAlmostEqual(
+                event.injection_parameters["start_multiplier"],
+                expected[0],
+            )
+            self.assertAlmostEqual(
+                event.injection_parameters["end_multiplier"],
+                expected[-1],
+            )
 
             for feature in ("latency_ms", "jitter_ms"):
                 before = self.data[feature].iloc[

@@ -235,7 +235,13 @@ def _inject_gradual_drift(
         start=1,
     ):
         end = start + 60
-        ramp = np.linspace(1.0, multiplier, 60)
+        start_multiplier = 1.0 + (multiplier - 1.0) / 59
+
+        ramp = np.linspace(
+            start_multiplier,
+            multiplier,
+            60,
+        )
 
         for feature in affected:
             values = result[feature].iloc[start:end].to_numpy(dtype=float)
@@ -251,7 +257,7 @@ def _inject_gradual_drift(
                 severity="medium" if multiplier == 2.0 else "strong",
                 affected_features=affected,
                 parameters={
-                    "start_multiplier": 1.0,
+                    "start_multiplier": start_multiplier,
                     "end_multiplier": multiplier,
                     "duration_samples": 60,
                     "ramp": "linear",
