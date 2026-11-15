@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -92,6 +93,30 @@ def _aggregate_inspection_status(
     return InspectionStatus.NOT_APPLICABLE
 
 
+def _validate_non_negative_integer(name: str, value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative.")
+
+
+def _validate_duration(value: float | None) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("duration_seconds must be a number.")
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError(
+                "duration_seconds must be finite and non-negative."
+            )
+        return
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(
+            "duration_seconds must be finite and non-negative."
+        )
+
+
 @dataclass(frozen=True)
 class AuditCheckResult:
     """Result of one independent Ground Truth audit check."""
@@ -104,6 +129,25 @@ class AuditCheckResult:
     actual: str | None = None
     details: tuple[tuple[str, str], ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.check_id, str):
+            raise TypeError("check_id must be a string.")
+        if not self.check_id.strip():
+            raise ValueError("check_id must not be empty.")
+
+        if not isinstance(self.name, str):
+            raise TypeError("name must be a string.")
+        if not self.name.strip():
+            raise ValueError("name must not be empty.")
+
+        if not isinstance(self.status, InspectionStatus):
+            raise TypeError("status must be an InspectionStatus.")
+
+        if not isinstance(self.message, str):
+            raise TypeError("message must be a string.")
+        if not self.message.strip():
+            raise ValueError("message must not be empty.")
+
 
 @dataclass(frozen=True)
 class SeedAuditResult:
@@ -114,6 +158,18 @@ class SeedAuditResult:
     dataset_count: int
     started_at: str | None = None
     duration_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        _validate_non_negative_integer("seed", self.seed)
+        _validate_non_negative_integer("dataset_count", self.dataset_count)
+        _validate_duration(self.duration_seconds)
+
+        if not isinstance(self.checks, tuple):
+            raise TypeError("checks must be a tuple.")
+        if not all(
+            isinstance(check, AuditCheckResult) for check in self.checks
+        ):
+            raise TypeError("checks must contain AuditCheckResult objects.")
 
     @property
     def status(self) -> InspectionStatus:
@@ -157,6 +213,19 @@ class GroundTruthAuditReport:
     seed_results: tuple[SeedAuditResult, ...]
     started_at: str | None = None
     duration_seconds: float | None = None
+
+    def __post_init__(self) -> None:
+        _validate_duration(self.duration_seconds)
+        if not isinstance(self.seed_results, tuple):
+            raise TypeError("seed_results must be a tuple.")
+        if not all(
+            isinstance(result, SeedAuditResult)
+            for result in self.seed_results
+        ):
+            raise TypeError("seed_results must contain SeedAuditResult objects.")
+        seeds = tuple(result.seed for result in self.seed_results)
+        if len(seeds) != len(set(seeds)):
+            raise ValueError("seed_results must not contain duplicate seeds.")
 
     @property
     def status(self) -> InspectionStatus:

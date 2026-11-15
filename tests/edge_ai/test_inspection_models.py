@@ -206,5 +206,128 @@ class TestInspectionModels(unittest.TestCase):
             report.seed_results = ()
 
 
+
+class TestAuditModelValidation(unittest.TestCase):
+
+    def make_check(self, **overrides):
+        values = {
+            "check_id": "GT-01",
+            "name": "Test check",
+            "status": InspectionStatus.PASS,
+            "message": "Test result",
+        }
+        values.update(overrides)
+        return AuditCheckResult(**values)
+
+    def make_seed_result(self, **overrides):
+        values = {
+            "seed": 0,
+            "checks": (self.make_check(),),
+            "dataset_count": 1,
+        }
+        values.update(overrides)
+        return SeedAuditResult(**values)
+
+    def test_zero_seed_is_valid(self):
+        result = self.make_seed_result(seed=0)
+        self.assertEqual(result.seed, 0)
+
+    def test_negative_seed_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.make_seed_result(seed=-1)
+
+    def test_boolean_seed_is_rejected(self):
+        with self.assertRaises(TypeError):
+            self.make_seed_result(seed=True)
+
+    def test_non_integer_seed_is_rejected(self):
+        with self.assertRaises(TypeError):
+            self.make_seed_result(seed=1.5)
+
+    def test_negative_dataset_count_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.make_seed_result(dataset_count=-1)
+
+    def test_boolean_dataset_count_is_rejected(self):
+        with self.assertRaises(TypeError):
+            self.make_seed_result(dataset_count=True)
+
+    def test_checks_must_be_tuple(self):
+        with self.assertRaises(TypeError):
+            self.make_seed_result(checks=[self.make_check()])
+
+    def test_checks_must_contain_audit_check_results(self):
+        with self.assertRaises(TypeError):
+            self.make_seed_result(checks=("invalid",))
+
+    def test_negative_duration_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.make_seed_result(duration_seconds=-0.1)
+
+    def test_non_finite_duration_is_rejected(self):
+        for duration in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(duration=duration):
+                with self.assertRaises(ValueError):
+                    self.make_seed_result(duration_seconds=duration)
+
+    def test_invalid_duration_type_is_rejected(self):
+        for duration in (True, "1.5"):
+            with self.subTest(duration=duration):
+                with self.assertRaises(TypeError):
+                    self.make_seed_result(duration_seconds=duration)
+
+    def test_empty_check_fields_are_rejected(self):
+        for field in ("check_id", "name", "message"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError):
+                    self.make_check(**{field: "  "})
+
+    def test_invalid_check_field_types_are_rejected(self):
+        for field in ("check_id", "name", "message"):
+            with self.subTest(field=field):
+                with self.assertRaises(TypeError):
+                    self.make_check(**{field: None})
+
+    def test_invalid_check_status_is_rejected(self):
+        with self.assertRaises(TypeError):
+            self.make_check(status="PASS")
+
+    def test_report_seed_results_must_be_tuple(self):
+        with self.assertRaises(TypeError):
+            GroundTruthAuditReport(seed_results=[])
+
+    def test_report_seed_results_must_contain_seed_audit_results(self):
+        with self.assertRaises(TypeError):
+            GroundTruthAuditReport(seed_results=("invalid",))
+
+    def test_report_rejects_duplicate_seeds(self):
+        first = self.make_seed_result(seed=0)
+        second = self.make_seed_result(seed=0)
+
+        with self.assertRaises(ValueError):
+            GroundTruthAuditReport(seed_results=(first, second))
+
+    def test_report_rejects_invalid_duration(self):
+        for duration in (-1, float("nan"), float("inf")):
+            with self.subTest(duration=duration):
+                with self.assertRaises(ValueError):
+                    GroundTruthAuditReport(
+                        seed_results=(),
+                        duration_seconds=duration,
+                    )
+
+    def test_report_rejects_invalid_duration_type(self):
+        with self.assertRaises(TypeError):
+            GroundTruthAuditReport(
+                seed_results=(),
+                duration_seconds=True,
+            )
+
+
+    def test_very_large_integer_duration_is_valid(self):
+        result = self.make_seed_result(duration_seconds=10**1000)
+        self.assertEqual(result.duration_seconds, 10**1000)
+
+
 if __name__ == "__main__":
     unittest.main()
