@@ -70,3 +70,134 @@ class StructuralInspectionReport:
     seed_results: tuple[SeedInspectionStatus, ...]
     errors: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
+
+
+def _aggregate_inspection_status(
+    statuses: tuple[InspectionStatus, ...],
+) -> InspectionStatus:
+    """Aggregate inspection statuses using severity precedence."""
+
+    if not statuses:
+        return InspectionStatus.NOT_APPLICABLE
+
+    if InspectionStatus.FAIL in statuses:
+        return InspectionStatus.FAIL
+
+    if InspectionStatus.WARNING in statuses:
+        return InspectionStatus.WARNING
+
+    if InspectionStatus.PASS in statuses:
+        return InspectionStatus.PASS
+
+    return InspectionStatus.NOT_APPLICABLE
+
+
+@dataclass(frozen=True)
+class AuditCheckResult:
+    """Result of one independent Ground Truth audit check."""
+
+    check_id: str
+    name: str
+    status: InspectionStatus
+    message: str
+    expected: str | None = None
+    actual: str | None = None
+    details: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class SeedAuditResult:
+    """Aggregated Ground Truth audit results for one experiment seed."""
+
+    seed: int
+    checks: tuple[AuditCheckResult, ...]
+    dataset_count: int
+    started_at: str | None = None
+    duration_seconds: float | None = None
+
+    @property
+    def status(self) -> InspectionStatus:
+        return _aggregate_inspection_status(
+            tuple(check.status for check in self.checks)
+        )
+
+    @property
+    def passed_checks(self) -> int:
+        return sum(
+            check.status == InspectionStatus.PASS
+            for check in self.checks
+        )
+
+    @property
+    def warning_checks(self) -> int:
+        return sum(
+            check.status == InspectionStatus.WARNING
+            for check in self.checks
+        )
+
+    @property
+    def failed_checks(self) -> int:
+        return sum(
+            check.status == InspectionStatus.FAIL
+            for check in self.checks
+        )
+
+    @property
+    def not_applicable_checks(self) -> int:
+        return sum(
+            check.status == InspectionStatus.NOT_APPLICABLE
+            for check in self.checks
+        )
+
+
+@dataclass(frozen=True)
+class GroundTruthAuditReport:
+    """Aggregated Ground Truth audit report across experiment seeds."""
+
+    seed_results: tuple[SeedAuditResult, ...]
+    started_at: str | None = None
+    duration_seconds: float | None = None
+
+    @property
+    def status(self) -> InspectionStatus:
+        return _aggregate_inspection_status(
+            tuple(result.status for result in self.seed_results)
+        )
+
+    @property
+    def total_seeds(self) -> int:
+        return len(self.seed_results)
+
+    @property
+    def total_datasets(self) -> int:
+        return sum(
+            result.dataset_count for result in self.seed_results
+        )
+
+    @property
+    def passed_seeds(self) -> int:
+        return sum(
+            result.status == InspectionStatus.PASS
+            for result in self.seed_results
+        )
+
+    @property
+    def warning_seeds(self) -> int:
+        return sum(
+            result.status == InspectionStatus.WARNING
+            for result in self.seed_results
+        )
+
+    @property
+    def failed_seeds(self) -> int:
+        return sum(
+            result.status == InspectionStatus.FAIL
+            for result in self.seed_results
+        )
+
+    @property
+    def not_applicable_seeds(self) -> int:
+        return sum(
+            result.status == InspectionStatus.NOT_APPLICABLE
+            for result in self.seed_results
+        )
