@@ -63,6 +63,7 @@ MANIFEST_COLUMNS = (
     "anomaly_events",
     "training_file",
     "calibration_file",
+    "evaluation_base_file",
     "evaluation_file",
     "ground_truth_file",
     "events_file",
@@ -200,9 +201,11 @@ def _build_seed(
 
     training_path = seed_dir / "training.csv"
     calibration_path = seed_dir / "calibration.csv"
+    evaluation_base_path = seed_dir / "evaluation_base.csv"
 
     _write_csv(training, training_path)
     _write_csv(calibration, calibration_path)
+    _write_csv(evaluation_base, evaluation_base_path)
 
     event_records: list[dict[str, Any]] = []
     manifest_records: list[dict[str, Any]] = []
@@ -279,6 +282,9 @@ def _build_seed(
                 "calibration_file": calibration_path.relative_to(
                     staging_dir
                 ).as_posix(),
+                "evaluation_base_file": (
+                    evaluation_base_path.relative_to(staging_dir).as_posix()
+                ),
                 "evaluation_file": evaluation_path.relative_to(
                     staging_dir
                 ).as_posix(),
@@ -301,6 +307,7 @@ def _build_seed(
     samples_written = (
         len(training)
         + len(calibration)
+        + len(evaluation_base)
         + len(SCENARIO_NAMES) * config.evaluation_samples
     )
 

@@ -39,7 +39,7 @@ class TestDatasetBuilder(unittest.TestCase):
 
         self.assertEqual(report.seeds_processed, 1)
         self.assertEqual(report.evaluation_datasets, 6)
-        self.assertEqual(report.total_samples_written, 18240)
+        self.assertEqual(report.total_samples_written, 21120)
         self.assertGreater(report.total_events, 0)
         self.assertTrue(report.output_dir.exists())
 
@@ -59,6 +59,14 @@ class TestDatasetBuilder(unittest.TestCase):
             manifest["calibration_file"].nunique(),
             1,
         )
+        self.assertEqual(
+            manifest["evaluation_base_file"].nunique(),
+            1,
+        )
+        self.assertEqual(
+            manifest["evaluation_base_file"].iloc[0],
+            "seed_1000/evaluation_base.csv",
+        )
 
         self.assertEqual(
             int(manifest["anomaly_events"].sum()),
@@ -75,10 +83,14 @@ class TestDatasetBuilder(unittest.TestCase):
 
         self.assertTrue((seed_dir / "training.csv").is_file())
         self.assertTrue((seed_dir / "calibration.csv").is_file())
+        self.assertTrue((seed_dir / "evaluation_base.csv").is_file())
         self.assertTrue((seed_dir / "metadata" / "events.csv").is_file())
 
         training = pd.read_csv(seed_dir / "training.csv")
         calibration = pd.read_csv(seed_dir / "calibration.csv")
+        evaluation_base = pd.read_csv(
+            seed_dir / "evaluation_base.csv"
+        )
 
         expected_feature_columns = ["timestamp", *FEATURE_COLUMNS]
 
@@ -93,6 +105,14 @@ class TestDatasetBuilder(unittest.TestCase):
 
         self.assertEqual(len(training), self.config.training_samples)
         self.assertEqual(len(calibration), self.config.calibration_samples)
+        self.assertEqual(
+            evaluation_base.columns.tolist(),
+            expected_feature_columns,
+        )
+        self.assertEqual(
+            len(evaluation_base),
+            self.config.evaluation_samples,
+        )
 
         for scenario in SCENARIO_NAMES:
             feature_path = (
@@ -134,6 +154,12 @@ class TestDatasetBuilder(unittest.TestCase):
 
             self.assertNotIn("is_anomaly", features.columns)
             self.assertIn("is_anomaly", ground_truth.columns)
+
+            if scenario == "normal":
+                pd.testing.assert_frame_equal(
+                    features,
+                    evaluation_base,
+                )
 
     def test_ground_truth_labels_match_scenarios(self):
         build_datasets(
@@ -191,6 +217,10 @@ class TestDatasetBuilder(unittest.TestCase):
 
         build_datasets(first, config=self.config)
         build_datasets(second, config=self.config)
+
+        base_a = first / "seed_1000" / "evaluation_base.csv"
+        base_b = second / "seed_1000" / "evaluation_base.csv"
+        self.assertEqual(base_a.read_bytes(), base_b.read_bytes())
 
         for scenario in SCENARIO_NAMES:
             path_a = (
