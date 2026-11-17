@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 import numpy as np
 import pandas as pd
@@ -38,9 +38,16 @@ class DatasetLoader:
         self,
         dataset_dir: str | Path,
         experiment_config: ExperimentConfig = DEFAULT_CONFIG,
+        validation_mode: Literal["strict", "audit"] = "strict",
     ) -> None:
+        if validation_mode not in ("strict", "audit"):
+            raise ValueError(
+                "validation_mode must be 'strict' or 'audit'"
+            )
+
         self.dataset_dir = Path(dataset_dir).resolve()
         self.experiment_config = experiment_config
+        self.validation_mode = validation_mode
         self.experiment_config.validate()
 
     def _safe_path(
@@ -235,6 +242,7 @@ class DatasetLoader:
             for column in (
                 "training_file",
                 "calibration_file",
+                "evaluation_base_file",
                 "evaluation_file",
                 "ground_truth_file",
                 "events_file",
@@ -253,6 +261,7 @@ class DatasetLoader:
         shared_columns = (
             "training_file",
             "calibration_file",
+            "evaluation_base_file",
             "events_file",
         )
 
@@ -627,6 +636,12 @@ class DatasetLoader:
             f"Calibration for seed {seed}",
         )
 
+        evaluation_base = self._validate_telemetry(
+            self._read_csv(first["evaluation_base_file"]),
+            self.experiment_config.evaluation_samples,
+            f"Evaluation base for seed {seed}",
+        )
+
         evaluation: dict[str, pd.DataFrame] = {}
         ground_truth: dict[str, pd.DataFrame] = {}
 
@@ -639,24 +654,52 @@ class DatasetLoader:
                 f"Evaluation for seed {seed}, scenario {scenario}",
             )
 
-            truth = self._validate_ground_truth(
-                self._read_csv(row.ground_truth_file),
-                features,
-                seed,
-                scenario,
-            )
+            truth_data = self._read_csv(row.ground_truth_file)
+
+            if self.validation_mode == "strict":
+                truth = self._validate_ground_truth(
+                    truth_data,
+                    features,
+                    seed,
+                    scenario,
+                )
+            else:
+                description = (
+                    f"Ground Truth for seed {seed}, scenario {scenario}"
+                )
+                self._validate_columns(
+                    truth_data,
+                    GROUND_TRUTH_COLUMNS,
+                    description,
+                )
+
+                if len(truth_data) != self.experiment_config.evaluation_samples:
+                    raise DatasetLoadError(
+                        f"{description} sample count mismatch"
+                    )
+
+                # Preserve raw values for the Ground Truth Auditor.
+                truth = truth_data
 
             evaluation[scenario] = features
             ground_truth[scenario] = truth
 
         events = self._read_csv(first["events_file"])
 
-        events = self._validate_events(
-            events,
-            evaluation,
-            ground_truth,
-            seed,
-        )
+        if self.validation_mode == "strict":
+            events = self._validate_events(
+                events,
+                evaluation,
+                ground_truth,
+                seed,
+            )
+        else:
+            self._validate_columns(
+                events,
+                EVENT_METADATA_COLUMNS,
+                f"Events for seed {seed}",
+            )
+            # Preserve raw event metadata for the Ground Truth Auditor.
 
         event_counts = (
             events.groupby("scenario").size().to_dict()
@@ -664,19 +707,21 @@ class DatasetLoader:
             else {}
         )
 
-        for row in rows.itertuples(index=False):
-            actual_count = int(event_counts.get(row.scenario, 0))
+        if self.validation_mode == "strict":
+            for row in rows.itertuples(index=False):
+                actual_count = int(event_counts.get(row.scenario, 0))
 
-            if actual_count != int(row.anomaly_events):
-                raise DatasetLoadError(
-                    f"Event count mismatch for seed {seed}, "
-                    f"scenario {row.scenario}"
-                )
+                if actual_count != int(row.anomaly_events):
+                    raise DatasetLoadError(
+                        f"Event count mismatch for seed {seed}, "
+                        f"scenario {row.scenario}"
+                    )
 
         return SeedDataset(
             seed=seed,
             training=training,
             calibration=calibration,
+            evaluation_base=evaluation_base,
             evaluation=evaluation,
             ground_truth=ground_truth,
             events=events,

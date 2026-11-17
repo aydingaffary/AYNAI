@@ -95,6 +95,15 @@ class TestDatasetLoader(unittest.TestCase):
                 index=False,
             )
 
+            evaluation_base = self._telemetry(
+                "2025-01-01T04:00:00",
+                self.config.evaluation_samples,
+            )
+            evaluation_base.to_csv(
+                seed_dir / "evaluation_base.csv",
+                index=False,
+            )
+
             events_dir = seed_dir / "metadata"
             events_dir.mkdir(parents=True)
 
@@ -153,6 +162,9 @@ class TestDatasetLoader(unittest.TestCase):
                         "anomaly_events": 0,
                         "training_file": f"seed_{seed}/training.csv",
                         "calibration_file": f"seed_{seed}/calibration.csv",
+                        "evaluation_base_file": (
+                            f"seed_{seed}/evaluation_base.csv"
+                        ),
                         "evaluation_file": (
                             f"seed_{seed}/evaluation/{scenario}.csv"
                         ),
@@ -194,6 +206,10 @@ class TestDatasetLoader(unittest.TestCase):
         self.assertEqual(dataset.seed, 1000)
         self.assertEqual(len(dataset.training), 4)
         self.assertEqual(len(dataset.calibration), 3)
+        self.assertEqual(
+            len(dataset.evaluation_base),
+            self.config.evaluation_samples,
+        )
         self.assertEqual(len(dataset.events), 0)
 
         self.assertEqual(

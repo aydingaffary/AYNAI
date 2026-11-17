@@ -44,12 +44,14 @@ class TestInspectionModels(unittest.TestCase):
             seed=1000,
             training=frame,
             calibration=frame,
+            evaluation_base=frame,
             evaluation={"normal": frame},
             ground_truth={"normal": frame},
             events=pd.DataFrame(),
         )
 
         self.assertEqual(dataset.seed, 1000)
+        self.assertIs(dataset.evaluation_base, frame)
         self.assertIn("normal", dataset.evaluation)
         self.assertIn("normal", dataset.ground_truth)
 

@@ -23,6 +23,7 @@ class SeedDataset:
     seed: int
     training: pd.DataFrame
     calibration: pd.DataFrame
+    evaluation_base: pd.DataFrame
     evaluation: dict[str, pd.DataFrame]
     ground_truth: dict[str, pd.DataFrame]
     events: pd.DataFrame
