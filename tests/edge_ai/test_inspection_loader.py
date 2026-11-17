@@ -182,10 +182,11 @@ class TestDatasetLoader(unittest.TestCase):
             columns=MANIFEST_COLUMNS,
         ).to_csv(self.root / "manifest.csv", index=False)
 
-    def _loader(self):
+    def _loader(self, validation_mode="strict"):
         return DatasetLoader(
             self.root,
             experiment_config=self.config,
+            validation_mode=validation_mode,
         )
 
     def test_validate_manifest_accepts_complete_dataset(self):
@@ -501,6 +502,123 @@ class TestDatasetLoader(unittest.TestCase):
         with self.assertRaises(DatasetLoadError):
             self._loader().load_seed_dataset(1000)
 
+
+
+    def test_audit_mode_preserves_semantically_invalid_ground_truth(self):
+        path = (
+            self.root / "seed_1000"
+            / "ground_truth" / "normal.csv"
+        )
+        data = pd.read_csv(path)
+
+        data.loc[0, "timestamp"] = "not-a-timestamp"
+        data.loc[0, "seed"] = 9999
+        data.loc[0, "scenario"] = "unknown_scenario"
+        data.loc[0, "phase"] = "Training"
+        data.loc[0, "is_anomaly"] = 2
+        data.to_csv(path, index=False)
+
+        dataset = self._loader("audit").load_seed_dataset(1000)
+        truth = dataset.ground_truth["normal"]
+
+        self.assertEqual(truth.loc[0, "timestamp"], "not-a-timestamp")
+        self.assertEqual(truth.loc[0, "seed"], 9999)
+        self.assertEqual(truth.loc[0, "scenario"], "unknown_scenario")
+        self.assertEqual(truth.loc[0, "phase"], "Training")
+        self.assertEqual(truth.loc[0, "is_anomaly"], 2)
+
+    def test_audit_mode_preserves_semantically_invalid_events(self):
+        path = (
+            self.root / "seed_1000"
+            / "metadata" / "events.csv"
+        )
+
+        event = {
+            "seed": 9999,
+            "event_id": "invalid-event",
+            "scenario": "unknown_scenario",
+            "start_timestamp": "not-a-timestamp",
+            "end_timestamp": "also-invalid",
+            "start_index": -1,
+            "end_index": 2,
+            "severity": "unknown",
+            "affected_features": "[invalid-json",
+            "injection_parameters": "{invalid-json",
+        }
+
+        pd.DataFrame(
+            [event],
+            columns=EVENT_METADATA_COLUMNS,
+        ).to_csv(path, index=False)
+
+        dataset = self._loader("audit").load_seed_dataset(1000)
+        events = dataset.events
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events.loc[0, "seed"], 9999)
+        self.assertEqual(events.loc[0, "scenario"], "unknown_scenario")
+        self.assertEqual(events.loc[0, "start_index"], -1)
+        self.assertEqual(events.loc[0, "affected_features"], "[invalid-json")
+
+    def test_audit_mode_rejects_invalid_telemetry(self):
+        path = self.root / "seed_1000" / "training.csv"
+        data = pd.read_csv(path)
+        data.loc[0, "latency_ms"] = float("inf")
+        data.to_csv(path, index=False)
+
+        with self.assertRaises(DatasetLoadError):
+            self._loader("audit").load_seed_dataset(1000)
+
+    def test_audit_mode_rejects_ground_truth_schema_mismatch(self):
+        path = (
+            self.root / "seed_1000"
+            / "ground_truth" / "normal.csv"
+        )
+        data = pd.read_csv(path).drop(columns=["is_anomaly"])
+        data.to_csv(path, index=False)
+
+        with self.assertRaises(DatasetLoadError):
+            self._loader("audit").load_seed_dataset(1000)
+
+    def test_audit_mode_rejects_ground_truth_sample_count_mismatch(self):
+        path = (
+            self.root / "seed_1000"
+            / "ground_truth" / "normal.csv"
+        )
+        data = pd.read_csv(path).iloc[:-1]
+        data.to_csv(path, index=False)
+
+        with self.assertRaises(DatasetLoadError):
+            self._loader("audit").load_seed_dataset(1000)
+
+    def test_audit_mode_rejects_events_schema_mismatch(self):
+        path = (
+            self.root / "seed_1000"
+            / "metadata" / "events.csv"
+        )
+        data = pd.DataFrame(columns=["seed", "event_id"])
+        data.to_csv(path, index=False)
+
+        with self.assertRaises(DatasetLoadError):
+            self._loader("audit").load_seed_dataset(1000)
+
+    def test_audit_mode_rejects_path_traversal(self):
+        manifest_path = self.root / "manifest.csv"
+        manifest = pd.read_csv(manifest_path)
+
+        manifest.loc[0, "ground_truth_file"] = "../outside.csv"
+        manifest.to_csv(manifest_path, index=False)
+
+        with self.assertRaises(DatasetLoadError):
+            self._loader("audit").load_seed_dataset(1000)
+
+    def test_invalid_validation_mode_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            DatasetLoader(
+                self.root,
+                experiment_config=self.config,
+                validation_mode="unknown",
+            )
 
 if __name__ == "__main__":
     unittest.main()
