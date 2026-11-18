@@ -1,11 +1,16 @@
 """Tests and fixtures for the Ground Truth auditor."""
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
 from experiments.edge_ai.config import SCENARIO_NAMES
-from experiments.edge_ai.inspection.models import SeedDataset
+from experiments.edge_ai.inspection.models import (
+    InspectionStatus,
+    SeedDataset,
+)
+from experiments.edge_ai.inspection.auditor import GroundTruthAuditor
 from experiments.edge_ai.pipeline.dataset_builder import (
     EVENT_METADATA_COLUMNS,
     MANIFEST_COLUMNS,
@@ -217,6 +222,120 @@ class TestGroundTruthAuditorFixture(unittest.TestCase):
 
         for value in self.dataset.events["injection_parameters"]:
             self.assertIsInstance(value, str)
+
+
+class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
+
+    def setUp(self):
+        self.auditor = GroundTruthAuditor()
+
+    def test_audit_preserves_seed_isolation(self):
+        first_dataset, first_manifest = _build_audit_fixture(seed=1000)
+        second_dataset, second_manifest = _build_audit_fixture(seed=1001)
+
+        manifest = pd.concat(
+            [first_manifest, second_manifest],
+            ignore_index=True,
+        )
+
+        original_audit_seed = self.auditor.audit_seed
+
+        def audit_seed_with_failure(dataset, current_manifest):
+            if dataset.seed == 1000:
+                raise RuntimeError("simulated seed failure")
+            return original_audit_seed(dataset, current_manifest)
+
+        with patch.object(
+            self.auditor,
+            "audit_seed",
+            side_effect=audit_seed_with_failure,
+        ):
+            report = self.auditor.audit(
+                [first_dataset, second_dataset],
+                manifest,
+            )
+
+        self.assertEqual(
+            [result.seed for result in report.seed_results],
+            [1000, 1001],
+        )
+        self.assertEqual(
+            report.seed_results[0].status,
+            InspectionStatus.FAIL,
+        )
+        self.assertEqual(
+            report.seed_results[1].status,
+            InspectionStatus.PASS,
+        )
+
+    def test_failed_seed_generates_complete_failure_report(self):
+        dataset, manifest = _build_audit_fixture(seed=1000)
+
+        with patch.object(
+            self.auditor,
+            "audit_seed",
+            side_effect=RuntimeError("simulated seed failure"),
+        ):
+            report = self.auditor.audit([dataset], manifest)
+
+        result = report.seed_results[0]
+
+        self.assertEqual(result.seed, 1000)
+        self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
+        self.assertEqual(len(result.checks), 42)
+        self.assertEqual(result.failed_checks, 42)
+        self.assertTrue(
+            all(
+                check.status == InspectionStatus.FAIL
+                for check in result.checks
+            )
+        )
+        self.assertTrue(
+            all(
+                "simulated seed failure" in check.message
+                for check in result.checks
+            )
+        )
+
+    def test_audit_preserves_seed_order(self):
+        first_dataset, first_manifest = _build_audit_fixture(seed=1002)
+        second_dataset, second_manifest = _build_audit_fixture(seed=1000)
+
+        manifest = pd.concat(
+            [first_manifest, second_manifest],
+            ignore_index=True,
+        )
+
+        report = self.auditor.audit(
+            [first_dataset, second_dataset],
+            manifest,
+        )
+
+        self.assertEqual(
+            [result.seed for result in report.seed_results],
+            [1002, 1000],
+        )
+
+    def test_audit_rejects_duplicate_seeds(self):
+        first_dataset, first_manifest = _build_audit_fixture(seed=1000)
+        second_dataset, second_manifest = _build_audit_fixture(seed=1000)
+
+        manifest = pd.concat(
+            [first_manifest, second_manifest],
+            ignore_index=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Duplicate seed"):
+            self.auditor.audit(
+                [first_dataset, second_dataset],
+                manifest,
+            )
+
+    def test_audit_rejects_invalid_dataset_type(self):
+        _, manifest = _build_audit_fixture()
+
+        with self.assertRaisesRegex(TypeError, "SeedDataset"):
+            self.auditor.audit([object()], manifest)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from numbers import Integral, Real
 
 import pandas as pd
 
@@ -14,6 +15,24 @@ from experiments.edge_ai.inspection.models import (
     SeedAuditResult,
     SeedDataset,
 )
+
+
+def _is_valid_seed_value(value: object, expected_seed: int) -> bool:
+    """Return whether a value is the expected non-boolean integer seed."""
+    return (
+        isinstance(value, Integral)
+        and not isinstance(value, bool)
+        and value == expected_seed
+    )
+
+
+def _is_binary_label(value: object) -> bool:
+    """Return whether a value is a numeric, non-boolean binary label."""
+    return (
+        isinstance(value, Real)
+        and not isinstance(value, bool)
+        and value in (0, 1)
+    )
 
 
 class GroundTruthAuditor:
@@ -34,26 +53,61 @@ class GroundTruthAuditor:
         dataset: SeedDataset,
         manifest: pd.DataFrame,
     ) -> SeedAuditResult:
-        """Audit the internal Ground Truth consistency of one seed."""
+        """Audit all expected and unexpected scenarios for one seed."""
         if not isinstance(dataset, SeedDataset):
             raise TypeError("dataset must be a SeedDataset.")
         if not isinstance(manifest, pd.DataFrame):
             raise TypeError("manifest must be a pandas DataFrame.")
 
+        callbacks = (
+            ("GT-01", "Seed Consistency", self._check_seed),
+            ("GT-02", "Scenario Consistency", self._check_scenario),
+            ("GT-03", "Phase Consistency", self._check_phase),
+            ("GT-04", "Timestamp Alignment", self._check_timestamps),
+            ("GT-05", "Binary Label Domain", self._check_labels),
+            ("GT-06", "Label/Metadata Consistency", self._check_metadata),
+            ("GT-07", "Event ID Integrity", self._check_event_ids),
+        )
+
+        expected_scenarios = list(SCENARIO_NAMES)
+        unexpected_scenarios = sorted(
+            set(dataset.ground_truth) - set(SCENARIO_NAMES),
+            key=str,
+        )
+        scenarios = expected_scenarios + unexpected_scenarios
+
         checks = []
 
-        for scenario, ground_truth in dataset.ground_truth.items():
+        for scenario in scenarios:
+            if scenario not in dataset.ground_truth:
+                for check_id, name, _ in callbacks:
+                    if check_id == "GT-02":
+                        result = self._result(
+                            check_id,
+                            name,
+                            InspectionStatus.FAIL,
+                            "Expected Ground Truth scenario is missing.",
+                            scenario,
+                            expected="scenario present in Ground Truth",
+                            actual="missing scenario",
+                        )
+                    else:
+                        result = self._result(
+                            check_id,
+                            name,
+                            InspectionStatus.NOT_APPLICABLE,
+                            "Scenario is missing; this check cannot be evaluated.",
+                            scenario,
+                        )
+
+                    checks.append(result)
+
+                continue
+
+            ground_truth = dataset.ground_truth[scenario]
             evaluation = dataset.evaluation.get(scenario)
 
-            for check_id, name, callback in (
-                ("GT-01", "Seed Consistency", self._check_seed),
-                ("GT-02", "Scenario Consistency", self._check_scenario),
-                ("GT-03", "Phase Consistency", self._check_phase),
-                ("GT-04", "Timestamp Alignment", self._check_timestamps),
-                ("GT-05", "Binary Label Domain", self._check_labels),
-                ("GT-06", "Label/Metadata Consistency", self._check_metadata),
-                ("GT-07", "Event ID Integrity", self._check_event_ids),
-            ):
+            for check_id, name, callback in callbacks:
                 try:
                     result = callback(
                         dataset.seed,
@@ -83,17 +137,87 @@ class GroundTruthAuditor:
         datasets: Iterable[SeedDataset],
         manifest: pd.DataFrame,
     ) -> GroundTruthAuditReport:
-        """Audit multiple seeds and preserve seed-level fault isolation."""
+        """Audit seeds independently and preserve seed-level fault isolation."""
         if not isinstance(manifest, pd.DataFrame):
             raise TypeError("manifest must be a pandas DataFrame.")
 
-        results = []
+        try:
+            iterator = iter(datasets)
+        except TypeError as exc:
+            raise TypeError("datasets must be an iterable of SeedDataset objects.") from exc
 
-        for dataset in datasets:
-            results.append(self.audit_seed(dataset, manifest))
+        results = []
+        seen_seeds = set()
+
+        for dataset in iterator:
+            if not isinstance(dataset, SeedDataset):
+                raise TypeError("datasets must contain only SeedDataset objects.")
+
+            seed = dataset.seed
+            if (
+                not isinstance(seed, Integral)
+                or isinstance(seed, bool)
+                or seed < 0
+            ):
+                raise ValueError(
+                    "Each SeedDataset must have a non-negative integer seed."
+                )
+
+            if seed in seen_seeds:
+                raise ValueError(f"Duplicate seed in audit input: {seed}.")
+
+            seen_seeds.add(seed)
+
+            try:
+                result = self.audit_seed(dataset, manifest)
+            except Exception as exc:
+                result = self._failed_seed_result(dataset, exc)
+
+            results.append(result)
 
         return GroundTruthAuditReport(
             seed_results=tuple(results),
+        )
+
+    def _failed_seed_result(
+        self,
+        dataset: SeedDataset,
+        exc: Exception,
+    ) -> SeedAuditResult:
+        """Create a complete failure report when a seed cannot be audited."""
+        ground_truth = dataset.ground_truth
+        if isinstance(ground_truth, dict):
+            unexpected = sorted(
+                set(ground_truth) - set(SCENARIO_NAMES),
+                key=str,
+            )
+            scenarios = (*SCENARIO_NAMES, *unexpected)
+            dataset_count = len(ground_truth)
+        else:
+            scenarios = SCENARIO_NAMES
+            dataset_count = 0
+
+        message = (
+            f"Seed audit execution failed: {type(exc).__name__}: {exc}"
+        )
+
+        checks = tuple(
+            self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                message,
+                scenario,
+                actual="seed-level audit failure",
+            )
+            for scenario in scenarios
+            for check_id, name in self.CHECKS
+        )
+
+        return SeedAuditResult(
+            seed=dataset.seed,
+            checks=checks,
+            dataset_count=dataset_count,
         )
 
     @staticmethod
@@ -137,14 +261,9 @@ class GroundTruthAuditor:
         values = ground_truth["seed"]
 
         valid = (
-            values.notna().all()
-            and values.map(
-                lambda value: (
-                    not isinstance(value, bool)
-                    and isinstance(value, (int, float))
-                    and value == seed
-                )
-            ).all()
+            not ground_truth.empty
+            and values.notna().all()
+            and values.map(lambda value: _is_valid_seed_value(value, seed)).all()
         )
 
         return self._result(
@@ -291,15 +410,11 @@ class GroundTruthAuditor:
             )
 
         values = ground_truth["is_anomaly"]
-
-        def is_binary(value):
-            return (
-                not isinstance(value, bool)
-                and isinstance(value, (int, float))
-                and value in (0, 1)
-            )
-
-        valid = values.notna().all() and values.map(is_binary).all()
+        valid = (
+            not ground_truth.empty
+            and values.notna().all()
+            and values.map(_is_binary_label).all()
+        )
 
         return self._result(
             check_id, name,
@@ -333,17 +448,27 @@ class GroundTruthAuditor:
 
         if "is_anomaly" not in ground_truth:
             return self._result(
-                check_id, name, InspectionStatus.NOT_APPLICABLE,
-                "The anomaly label column is unavailable.",
+                check_id, name, InspectionStatus.FAIL,
+                "Ground Truth is missing the anomaly label column.",
                 scenario,
+                expected="valid binary labels",
+                actual="missing is_anomaly column",
             )
 
         labels = ground_truth["is_anomaly"]
-        if not labels.notna().all() or not labels.isin([0, 1]).all():
+        labels_valid = (
+            not ground_truth.empty
+            and labels.notna().all()
+            and labels.map(_is_binary_label).all()
+        )
+
+        if not labels_valid:
             return self._result(
-                check_id, name, InspectionStatus.NOT_APPLICABLE,
-                "Metadata consistency requires valid binary labels.",
+                check_id, name, InspectionStatus.FAIL,
+                "Metadata consistency requires non-empty valid binary labels.",
                 scenario,
+                expected="non-empty labels in {0, 1}",
+                actual=str(labels.drop_duplicates().tolist()),
             )
 
         normal = labels.eq(0)
@@ -351,17 +476,26 @@ class GroundTruthAuditor:
 
         normal_clean = ground_truth.loc[normal, list(columns)].isna().all().all()
 
-        anomalous_complete = True
-        for column in columns:
-            values = ground_truth.loc[anomalous, column]
-            anomalous_complete = (
-                anomalous_complete
-                and values.notna().all()
-                and values.map(
-                    lambda value: isinstance(value, str) and bool(value.strip())
-                ).all()
-            )
+        event_ids = ground_truth.loc[anomalous, "event_id"]
+        anomaly_types = ground_truth.loc[anomalous, "anomaly_type"]
+        severities = ground_truth.loc[anomalous, "severity"]
 
+        event_ids_valid = event_ids.map(
+            lambda value: isinstance(value, str) and bool(value.strip())
+        ).all()
+
+        anomaly_types_valid = anomaly_types.map(
+            lambda value: isinstance(value, str) and value == scenario
+        ).all()
+
+        valid_severities = {"weak", "medium", "strong"}
+        severities_valid = severities.map(
+            lambda value: isinstance(value, str) and value in valid_severities
+        ).all()
+
+        anomalous_complete = (
+            event_ids_valid and anomaly_types_valid and severities_valid
+        )
         valid = normal_clean and anomalous_complete
 
         return self._result(
@@ -370,10 +504,15 @@ class GroundTruthAuditor:
             "Labels and event metadata are mutually consistent."
             if valid else "Normal/anomalous labels conflict with event metadata.",
             scenario,
-            expected="normal rows: null metadata; anomalous rows: complete metadata",
+            expected=(
+                "normal rows: null metadata; anomalous rows: valid event ID, "
+                "matching anomaly_type, and supported severity"
+            ),
             actual=(
                 f"normal_clean={normal_clean}; "
-                f"anomalous_complete={anomalous_complete}"
+                f"event_ids_valid={event_ids_valid}; "
+                f"anomaly_types_valid={anomaly_types_valid}; "
+                f"severities_valid={severities_valid}"
             ),
         )
 
@@ -397,38 +536,50 @@ class GroundTruthAuditor:
             )
 
         labels = ground_truth["is_anomaly"]
-        if not labels.notna().all() or not labels.isin([0, 1]).all():
+        labels_valid = (
+            not ground_truth.empty
+            and labels.notna().all()
+            and labels.map(_is_binary_label).all()
+        )
+
+        if not labels_valid:
             return self._result(
-                check_id, name, InspectionStatus.NOT_APPLICABLE,
-                "Event ID integrity requires valid binary labels.",
+                check_id, name, InspectionStatus.FAIL,
+                "Event ID integrity requires non-empty valid binary labels.",
                 scenario,
+                expected="non-empty labels in {0, 1}",
+                actual=str(labels.drop_duplicates().tolist()),
             )
 
         ids = ground_truth["event_id"]
-        normal = labels.eq(0)
-        anomalous = labels.eq(1)
+        normal_clean = ids.loc[labels.eq(0)].isna().all()
 
-        normal_clean = ids.loc[normal].isna().all()
-        anomalous_valid = ids.loc[anomalous].map(
+        anomalous_ids = ids.loc[labels.eq(1)]
+        anomalous_valid = anomalous_ids.map(
             lambda value: isinstance(value, str) and bool(value.strip())
         ).all()
 
-        # A single event ID may span adjacent rows, but it must not
-        # disappear and reappear in a later, separate interval.
         contiguous = True
-        if anomalous_valid:
-            active_ids = ids.loc[anomalous].tolist()
-            closed_ids = set()
-            previous_id = None
+        closed_ids = set()
+        active_id = None
 
-            for event_id in active_ids:
-                if event_id != previous_id:
+        if anomalous_valid:
+            for label, event_id in zip(labels.tolist(), ids.tolist()):
+                if label == 0:
+                    if active_id is not None:
+                        closed_ids.add(active_id)
+                        active_id = None
+                    continue
+
+                if event_id != active_id:
                     if event_id in closed_ids:
                         contiguous = False
                         break
-                    if previous_id is not None:
-                        closed_ids.add(previous_id)
-                    previous_id = event_id
+
+                    if active_id is not None:
+                        closed_ids.add(active_id)
+
+                    active_id = event_id
 
         valid = normal_clean and anomalous_valid and contiguous
 
@@ -438,7 +589,10 @@ class GroundTruthAuditor:
             "Event IDs are present and internally contiguous."
             if valid else "Event IDs are missing, misplaced, or split across intervals.",
             scenario,
-            expected="normal rows: null IDs; each anomalous Event ID: one contiguous interval",
+            expected=(
+                "normal rows: null IDs; each anomalous Event ID: "
+                "one contiguous interval"
+            ),
             actual=(
                 f"normal_clean={normal_clean}; "
                 f"anomalous_valid={anomalous_valid}; "
