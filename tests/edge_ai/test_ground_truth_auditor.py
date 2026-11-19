@@ -224,6 +224,44 @@ class TestGroundTruthAuditorFixture(unittest.TestCase):
             self.assertIsInstance(value, str)
 
 
+class TestEventMetadataAuditor(unittest.TestCase):
+
+    def setUp(self):
+        self.dataset, self.manifest = _build_audit_fixture()
+        self.auditor = GroundTruthAuditor()
+
+    def _get_evt01(self):
+        result = self.auditor.audit_seed(
+            self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-01"
+        )
+
+    def test_evt01_accepts_unique_non_empty_event_ids(self):
+        check = self._get_evt01()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt01_rejects_empty_event_id(self):
+        self.dataset.events.loc[0, "event_id"] = " "
+
+        check = self._get_evt01()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt01_rejects_duplicate_event_ids_across_scenarios(self):
+        self.dataset.events.loc[1, "event_id"] = (
+            self.dataset.events.loc[0, "event_id"]
+        )
+
+        check = self._get_evt01()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -282,8 +320,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 42)
-        self.assertEqual(result.failed_checks, 42)
+        self.assertEqual(len(result.checks), 43)
+        self.assertEqual(result.failed_checks, 43)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL

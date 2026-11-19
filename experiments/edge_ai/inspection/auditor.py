@@ -38,7 +38,7 @@ def _is_binary_label(value: object) -> bool:
 class GroundTruthAuditor:
     """Audit Ground Truth datasets without modifying source data."""
 
-    CHECKS = (
+    GROUND_TRUTH_CHECKS = (
         ("GT-01", "Seed Consistency"),
         ("GT-02", "Scenario Consistency"),
         ("GT-03", "Phase Consistency"),
@@ -47,6 +47,12 @@ class GroundTruthAuditor:
         ("GT-06", "Label/Metadata Consistency"),
         ("GT-07", "Event ID Integrity"),
     )
+
+    EVENT_CHECKS = (
+        ("EVT-01", "Event ID Uniqueness"),
+    )
+
+    CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
 
     def audit_seed(
         self,
@@ -125,6 +131,25 @@ class GroundTruthAuditor:
                     )
 
                 checks.append(result)
+
+        for check_id, name in self.EVENT_CHECKS:
+            try:
+                if check_id == "EVT-01":
+                    result = self._check_event_id_uniqueness(dataset)
+                else:
+                    raise NotImplementedError(
+                        f"Event check is not implemented: {check_id}"
+                    )
+            except Exception as exc:
+                result = self._result(
+                    check_id,
+                    name,
+                    InspectionStatus.FAIL,
+                    f"Check execution failed: {type(exc).__name__}: {exc}",
+                    "*",
+                )
+
+            checks.append(result)
 
         return SeedAuditResult(
             seed=dataset.seed,
@@ -211,7 +236,17 @@ class GroundTruthAuditor:
                 actual="seed-level audit failure",
             )
             for scenario in scenarios
-            for check_id, name in self.CHECKS
+            for check_id, name in self.GROUND_TRUTH_CHECKS
+        ) + tuple(
+            self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                message,
+                "*",
+                actual="seed-level audit failure",
+            )
+            for check_id, name in self.EVENT_CHECKS
         )
 
         return SeedAuditResult(
@@ -240,6 +275,86 @@ class GroundTruthAuditor:
             expected=expected,
             actual=actual,
             details=(("scenario", str(scenario)), *details),
+        )
+
+    def _check_event_id_uniqueness(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Validate non-empty and seed-wide unique event identifiers."""
+        check_id, name = "EVT-01", "Event ID Uniqueness"
+        events = dataset.events
+
+        if not isinstance(events, pd.DataFrame):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata must be a pandas DataFrame.",
+                "*",
+                expected="events DataFrame with an event_id column",
+                actual=type(events).__name__,
+            )
+
+        if "event_id" not in events.columns:
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata is missing the event_id column.",
+                "*",
+                expected="event_id column present",
+                actual="missing column",
+            )
+
+        identifiers = events["event_id"]
+        issues = []
+        first_seen = {}
+
+        for row_index, event_id in identifiers.items():
+            if not isinstance(event_id, str) or not event_id.strip():
+                issues.append(
+                    (
+                        ("event_row", str(row_index)),
+                        ("event_id", repr(event_id)),
+                        ("issue", "event_id must be a non-empty string"),
+                    )
+                )
+                continue
+
+            if event_id in first_seen:
+                issues.append(
+                    (
+                        ("event_row", str(row_index)),
+                        ("event_id", event_id),
+                        ("issue", f"duplicate of row {first_seen[event_id]}"),
+                    )
+                )
+            else:
+                first_seen[event_id] = row_index
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+
+        valid = not issues
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS if valid else InspectionStatus.FAIL,
+            "All event IDs are non-empty and unique within the seed."
+            if valid else "Event IDs contain empty or duplicate values.",
+            "*",
+            expected="non-empty string identifiers unique across the seed",
+            actual=(
+                f"event_count={len(events)}; "
+                f"unique_valid_ids={len(first_seen)}; "
+                f"issues={len(issues)}"
+            ),
+            details=details,
         )
 
     def _check_seed(
