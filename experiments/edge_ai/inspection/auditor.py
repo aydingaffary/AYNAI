@@ -50,6 +50,7 @@ class GroundTruthAuditor:
 
     EVENT_CHECKS = (
         ("EVT-01", "Event ID Uniqueness"),
+        ("EVT-02", "Event Domain"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -136,6 +137,8 @@ class GroundTruthAuditor:
             try:
                 if check_id == "EVT-01":
                     result = self._check_event_id_uniqueness(dataset)
+                elif check_id == "EVT-02":
+                    result = self._check_event_domain(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -352,6 +355,133 @@ class GroundTruthAuditor:
             actual=(
                 f"event_count={len(events)}; "
                 f"unique_valid_ids={len(first_seen)}; "
+                f"issues={len(issues)}"
+            ),
+            details=details,
+        )
+
+    def _check_event_domain(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Validate seed ownership, scenario, and severity for all events."""
+        check_id, name = "EVT-02", "Event Domain"
+        events = dataset.events
+
+        if not isinstance(events, pd.DataFrame):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata must be a pandas DataFrame.",
+                "*",
+                expected="events DataFrame with seed, scenario, and severity",
+                actual=type(events).__name__,
+            )
+
+        required_columns = ("seed", "scenario", "severity")
+        missing = [
+            column
+            for column in required_columns
+            if column not in events.columns
+        ]
+
+        issues = []
+
+        for column in missing:
+            issues.append(
+                (
+                    ("field", column),
+                    ("issue", "missing required column"),
+                )
+            )
+
+        valid_severities = {"weak", "medium", "strong"}
+
+        for row_index, row in events.iterrows():
+            event_id = (
+                repr(row["event_id"])
+                if "event_id" in events.columns
+                else "unavailable"
+            )
+
+            values = {
+                "seed": row["seed"] if "seed" in events.columns else None,
+                "scenario": (
+                    row["scenario"] if "scenario" in events.columns else None
+                ),
+                "severity": (
+                    row["severity"] if "severity" in events.columns else None
+                ),
+            }
+
+            checks = (
+                (
+                    "seed",
+                    lambda value: (
+                        isinstance(value, Integral)
+                        and not isinstance(value, bool)
+                        and value == dataset.seed
+                    ),
+                    f"must be the integer seed {dataset.seed}",
+                ),
+                (
+                    "scenario",
+                    lambda value: (
+                        isinstance(value, str)
+                        and value in SCENARIO_NAMES
+                    ),
+                    "must be a supported scenario name",
+                ),
+                (
+                    "severity",
+                    lambda value: (
+                        isinstance(value, str)
+                        and value in valid_severities
+                    ),
+                    "must be one of weak, medium, strong",
+                ),
+            )
+
+            for field, validator, reason in checks:
+                if field not in events.columns:
+                    continue
+
+                value = values[field]
+
+                if not validator(value):
+                    issues.append(
+                        (
+                            ("event_row", str(row_index)),
+                            ("event_id", event_id),
+                            ("field", field),
+                            ("value", repr(value)),
+                            ("issue", reason),
+                        )
+                    )
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+
+        valid = not issues
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS if valid else InspectionStatus.FAIL,
+            "All event metadata values belong to their supported domains."
+            if valid else "Event metadata contains missing or invalid domain values.",
+            "*",
+            expected=(
+                f"seed={dataset.seed}; "
+                "scenario in SCENARIO_NAMES; "
+                "severity in {weak, medium, strong}"
+            ),
+            actual=(
+                f"event_count={len(events)}; "
                 f"issues={len(issues)}"
             ),
             details=details,

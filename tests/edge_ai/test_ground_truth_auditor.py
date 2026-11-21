@@ -262,6 +262,94 @@ class TestEventMetadataAuditor(unittest.TestCase):
         self.assertEqual(check.status, InspectionStatus.FAIL)
 
 
+    def _get_evt02(self):
+        result = self.auditor.audit_seed(
+            self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-02"
+        )
+
+    def test_evt02_accepts_valid_event_domains(self):
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt02_rejects_seed_mismatch(self):
+        self.dataset.events.loc[0, "seed"] = self.dataset.seed + 1
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt02_rejects_non_integer_seed(self):
+        self.dataset.events["seed"] = (
+            self.dataset.events["seed"].astype(object)
+        )
+        self.dataset.events.loc[0, "seed"] = (
+            float(self.dataset.seed) + 0.5
+        )
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt02_rejects_unknown_scenario(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt02_rejects_unknown_severity(self):
+        self.dataset.events.loc[0, "severity"] = "critical"
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt02_rejects_missing_required_column(self):
+        self.dataset.events.drop(
+            columns=["scenario"],
+            inplace=True,
+        )
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt02_runs_without_event_id_column(self):
+        self.dataset.events.drop(
+            columns=["event_id"],
+            inplace=True,
+        )
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt02_accepts_empty_events_with_valid_schema(self):
+        self.dataset.events.drop(
+            index=self.dataset.events.index,
+            inplace=True,
+        )
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt02_reports_independent_row_errors(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+        self.dataset.events.loc[1, "severity"] = "critical"
+
+        check = self._get_evt02()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -320,8 +408,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 43)
-        self.assertEqual(result.failed_checks, 43)
+        self.assertEqual(len(result.checks), 44)
+        self.assertEqual(result.failed_checks, 44)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL
