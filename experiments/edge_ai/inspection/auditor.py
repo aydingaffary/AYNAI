@@ -51,6 +51,7 @@ class GroundTruthAuditor:
     EVENT_CHECKS = (
         ("EVT-01", "Event ID Uniqueness"),
         ("EVT-02", "Event Domain"),
+        ("EVT-03", "Event Index Validity"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -139,6 +140,8 @@ class GroundTruthAuditor:
                     result = self._check_event_id_uniqueness(dataset)
                 elif check_id == "EVT-02":
                     result = self._check_event_domain(dataset)
+                elif check_id == "EVT-03":
+                    result = self._check_event_indices(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -484,6 +487,182 @@ class GroundTruthAuditor:
                 f"event_count={len(events)}; "
                 f"issues={len(issues)}"
             ),
+            details=details,
+        )
+
+    def _check_event_indices(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Validate event intervals against their scenario evaluation data."""
+        check_id, name = "EVT-03", "Event Index Validity"
+        events = dataset.events
+
+        if not isinstance(events, pd.DataFrame):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata must be a pandas DataFrame.",
+                "*",
+                expected="events DataFrame with scenario, start_index, end_index",
+                actual=type(events).__name__,
+            )
+
+        required_columns = ("scenario", "start_index", "end_index")
+        missing = [
+            column for column in required_columns
+            if column not in events.columns
+        ]
+
+        issues = []
+
+        def add_issue(
+            row_index: object | None,
+            event_id: str,
+            scenario: object,
+            field: str,
+            value: object,
+            reason: str,
+        ) -> None:
+            details = []
+            if row_index is not None:
+                details.append(("event_row", str(row_index)))
+            details.extend(
+                (
+                    ("event_id", event_id),
+                    ("scenario", repr(scenario)),
+                    ("field", field),
+                    ("value", repr(value)),
+                    ("issue", reason),
+                )
+            )
+            issues.append(tuple(details))
+
+        for column in missing:
+            add_issue(
+                None,
+                "unavailable",
+                "unavailable",
+                column,
+                "unavailable",
+                "missing required column",
+            )
+
+        for position in range(len(events)):
+            row_index = events.index[position]
+
+            event_id = (
+                repr(events["event_id"].iloc[position])
+                if "event_id" in events.columns
+                else "unavailable"
+            )
+
+            scenario = (
+                events["scenario"].iloc[position]
+                if "scenario" in events.columns
+                else None
+            )
+
+            evaluation = None
+            evaluation_available = False
+
+            if "scenario" in events.columns:
+                if not isinstance(scenario, str) or scenario not in SCENARIO_NAMES:
+                    add_issue(
+                        row_index, event_id, scenario,
+                        "scenario", scenario,
+                        "must be a supported scenario name",
+                    )
+                elif scenario not in dataset.evaluation:
+                    add_issue(
+                        row_index, event_id, scenario,
+                        "scenario", scenario,
+                        "scenario evaluation is missing",
+                    )
+                elif not isinstance(dataset.evaluation[scenario], pd.DataFrame):
+                    add_issue(
+                        row_index, event_id, scenario,
+                        "evaluation",
+                        type(dataset.evaluation[scenario]).__name__,
+                        "scenario evaluation must be a pandas DataFrame",
+                    )
+                else:
+                    evaluation = dataset.evaluation[scenario]
+                    evaluation_available = True
+
+            start = (
+                events["start_index"].iloc[position]
+                if "start_index" in events.columns
+                else None
+            )
+            end = (
+                events["end_index"].iloc[position]
+                if "end_index" in events.columns
+                else None
+            )
+
+            start_valid = (
+                isinstance(start, Integral)
+                and not isinstance(start, bool)
+            )
+            end_valid = (
+                isinstance(end, Integral)
+                and not isinstance(end, bool)
+            )
+
+            if "start_index" in events.columns and not start_valid:
+                add_issue(
+                    row_index, event_id, scenario,
+                    "start_index", start,
+                    "must be a non-boolean integer",
+                )
+
+            if "end_index" in events.columns and not end_valid:
+                add_issue(
+                    row_index, event_id, scenario,
+                    "end_index", end,
+                    "must be a non-boolean integer",
+                )
+
+            if start_valid and start < 0:
+                add_issue(
+                    row_index, event_id, scenario,
+                    "start_index", start,
+                    "must be greater than or equal to zero",
+                )
+
+            if start_valid and end_valid:
+                if end <= start:
+                    add_issue(
+                        row_index, event_id, scenario,
+                        "end_index", end,
+                        "must be greater than start_index",
+                    )
+
+                if evaluation_available and end > len(evaluation):
+                    add_issue(
+                        row_index, event_id, scenario,
+                        "end_index", end,
+                        f"must not exceed evaluation length {len(evaluation)}",
+                    )
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+        valid = not issues
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS if valid else InspectionStatus.FAIL,
+            "All event intervals are valid for their scenario evaluations."
+            if valid else "Event metadata contains invalid index intervals.",
+            "*",
+            expected="0 <= start_index < end_index <= scenario evaluation length",
+            actual=f"event_count={len(events)}; issues={len(issues)}",
             details=details,
         )
 

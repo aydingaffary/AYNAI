@@ -1,5 +1,6 @@
 """Tests and fixtures for the Ground Truth auditor."""
 
+from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
@@ -350,6 +351,220 @@ class TestEventMetadataAuditor(unittest.TestCase):
         self.assertIn("issues=2", check.actual)
 
 
+    def _get_evt03(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-03"
+        )
+
+    def test_evt03_accepts_valid_events_across_scenarios(self):
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt03_accepts_start_index_zero(self):
+        self.dataset.events.loc[0, "start_index"] = 0
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt03_accepts_end_index_equal_to_evaluation_length(self):
+        self.dataset.events.loc[0, "end_index"] = EVALUATION_SAMPLES
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt03_rejects_negative_start_index(self):
+        self.dataset.events.loc[0, "start_index"] = -1
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt03_rejects_end_index_equal_to_start_index(self):
+        start = self.dataset.events.loc[0, "start_index"]
+        self.dataset.events.loc[0, "end_index"] = start
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_end_index_before_start_index(self):
+        self.dataset.events.loc[0, "start_index"] = 4
+        self.dataset.events.loc[0, "end_index"] = 3
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_end_index_beyond_evaluation_length(self):
+        self.dataset.events.loc[0, "end_index"] = (
+            EVALUATION_SAMPLES + 1
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_float_start_index(self):
+        self.dataset.events["start_index"] = (
+            self.dataset.events["start_index"].astype(object)
+        )
+        self.dataset.events.loc[0, "start_index"] = 1.5
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_float_end_index(self):
+        self.dataset.events["end_index"] = (
+            self.dataset.events["end_index"].astype(object)
+        )
+        self.dataset.events.loc[0, "end_index"] = 3.5
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_string_index(self):
+        self.dataset.events["start_index"] = (
+            self.dataset.events["start_index"].astype(object)
+        )
+        self.dataset.events.loc[0, "start_index"] = "1"
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_boolean_index(self):
+        self.dataset.events["start_index"] = (
+            self.dataset.events["start_index"].astype(object)
+        )
+        self.dataset.events.loc[0, "start_index"] = True
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_missing_required_column(self):
+        self.dataset.events.drop(
+            columns=["start_index"],
+            inplace=True,
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt03_rejects_non_dataframe_events(self):
+        invalid_dataset = replace(
+            self.dataset,
+            events=[],
+        )
+
+        check = self._get_evt03(invalid_dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_unknown_scenario(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_missing_scenario_evaluation(self):
+        scenario = self.dataset.events.loc[0, "scenario"]
+        del self.dataset.evaluation[scenario]
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_rejects_non_dataframe_scenario_evaluation(self):
+        scenario = self.dataset.events.loc[0, "scenario"]
+        self.dataset.evaluation[scenario] = []
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt03_reports_independent_errors_and_continues(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+        self.dataset.events.loc[1, "end_index"] = (
+            EVALUATION_SAMPLES + 1
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+    def test_evt03_reports_multiple_index_errors_for_one_event(self):
+        self.dataset.events.loc[0, "start_index"] = -1
+        self.dataset.events.loc[0, "end_index"] = (
+            EVALUATION_SAMPLES + 1
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+    def test_evt03_runs_without_event_id_column(self):
+        self.dataset.events.drop(
+            columns=["event_id"],
+            inplace=True,
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt03_accepts_empty_events_with_valid_schema(self):
+        self.dataset.events.drop(
+            index=self.dataset.events.index,
+            inplace=True,
+        )
+
+        check = self._get_evt03()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt03_does_not_modify_source_dataframes(self):
+        events_before = self.dataset.events.copy(deep=True)
+        evaluations_before = {
+            scenario: frame.copy(deep=True)
+            for scenario, frame in self.dataset.evaluation.items()
+        }
+
+        self._get_evt03()
+
+        pd.testing.assert_frame_equal(
+            self.dataset.events,
+            events_before,
+        )
+
+        self.assertEqual(
+            set(self.dataset.evaluation),
+            set(evaluations_before),
+        )
+
+        for scenario, expected in evaluations_before.items():
+            pd.testing.assert_frame_equal(
+                self.dataset.evaluation[scenario],
+                expected,
+            )
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -408,8 +623,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 44)
-        self.assertEqual(result.failed_checks, 44)
+        self.assertEqual(len(result.checks), 45)
+        self.assertEqual(result.failed_checks, 45)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL
