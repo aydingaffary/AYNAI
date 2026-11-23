@@ -565,6 +565,292 @@ class TestEventMetadataAuditor(unittest.TestCase):
             )
 
 
+
+    def _get_evt04(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-04"
+        )
+
+    def _evt04_dataset(self, intervals):
+        template = self.dataset.events.iloc[0].copy()
+        rows = []
+
+        for position, (scenario, start, end) in enumerate(intervals):
+            row = template.copy()
+            row["event_id"] = f"evt04-{position}"
+            row["scenario"] = scenario
+            row["start_index"] = start
+            row["end_index"] = end
+            rows.append(row)
+
+        events = pd.DataFrame(
+            rows,
+            columns=self.dataset.events.columns,
+        )
+        return replace(self.dataset, events=events)
+
+    def test_evt04_accepts_non_overlapping_intervals(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 3),
+            ("sudden_spike", 4, 6),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_accepts_adjacent_intervals(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 3),
+            ("sudden_spike", 3, 5),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt04_rejects_partial_overlap(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("overlap_pairs=1", check.actual)
+
+    def test_evt04_rejects_nested_intervals(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 7),
+            ("sudden_spike", 3, 5),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("overlap_pairs=1", check.actual)
+
+    def test_evt04_rejects_identical_intervals(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 2, 5),
+            ("sudden_spike", 2, 5),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("overlap_pairs=1", check.actual)
+
+    def test_evt04_reports_all_overlapping_pairs(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 6),
+            ("sudden_spike", 2, 5),
+            ("sudden_spike", 4, 7),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("overlap_pairs=3", check.actual)
+
+    def test_evt04_compares_only_events_in_the_same_scenario(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 5),
+            ("gradual_drift", 1, 5),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_is_independent_of_dataframe_row_order(self):
+        intervals = [
+            ("sudden_spike", 1, 6),
+            ("sudden_spike", 2, 5),
+            ("sudden_spike", 4, 7),
+        ]
+        dataset = self._evt04_dataset(intervals)
+        reordered = replace(
+            dataset,
+            events=dataset.events.iloc[::-1].copy(),
+        )
+
+        first = self._get_evt04(dataset)
+        second = self._get_evt04(reordered)
+
+        self.assertEqual(first.status, second.status)
+        self.assertEqual(first.actual, second.actual)
+
+        first_details = dict(first.details)
+        second_details = dict(second.details)
+
+        self.assertEqual(
+            {
+                (key, value)
+                for key, value in first_details.items()
+                if key.startswith("event_")
+            },
+            {
+                (key, value)
+                for key, value in second_details.items()
+                if key.startswith("event_")
+            },
+        )
+
+    def test_evt04_skips_non_integral_start_index(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        dataset.events["start_index"] = (
+            dataset.events["start_index"].astype(object)
+        )
+        dataset.events.loc[0, "start_index"] = 1.5
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_skips_non_integral_end_index(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        dataset.events["end_index"] = (
+            dataset.events["end_index"].astype(object)
+        )
+        dataset.events.loc[0, "end_index"] = "4"
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_skips_boolean_indices(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        dataset.events["start_index"] = (
+            dataset.events["start_index"].astype(object)
+        )
+        dataset.events.loc[0, "start_index"] = True
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_skips_unknown_scenario(self):
+        dataset = self._evt04_dataset([
+            ("unknown_scenario", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt04_skips_out_of_bounds_intervals(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, EVALUATION_SAMPLES + 1),
+            ("sudden_spike", 3, 6),
+        ])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("overlap_pairs=0", check.actual)
+
+    def test_evt04_runs_without_event_id_column(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        dataset.events.drop(columns=["event_id"], inplace=True)
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        details = dict(check.details)
+        self.assertIn("unavailable", details.values())
+
+    def test_evt04_accepts_empty_events_with_valid_schema(self):
+        dataset = replace(
+            self.dataset,
+            events=self.dataset.events.iloc[0:0].copy(),
+        )
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt04_rejects_missing_required_column(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+        ])
+        dataset.events.drop(columns=["start_index"], inplace=True)
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt04_rejects_non_dataframe_events(self):
+        dataset = replace(self.dataset, events=[])
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+
+    def test_evt04_skips_missing_scenario_evaluation(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        del dataset.evaluation["sudden_spike"]
+
+        check = self._get_evt04(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt04_does_not_modify_source_dataframes(self):
+        dataset = self._evt04_dataset([
+            ("sudden_spike", 1, 4),
+            ("sudden_spike", 3, 6),
+        ])
+        events_before = dataset.events.copy(deep=True)
+        evaluations_before = {
+            scenario: frame.copy(deep=True)
+            for scenario, frame in dataset.evaluation.items()
+        }
+
+        self._get_evt04(dataset)
+
+        pd.testing.assert_frame_equal(
+            dataset.events,
+            events_before,
+        )
+        self.assertEqual(
+            set(dataset.evaluation),
+            set(evaluations_before),
+        )
+
+        for scenario, expected in evaluations_before.items():
+            pd.testing.assert_frame_equal(
+                dataset.evaluation[scenario],
+                expected,
+            )
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -623,8 +909,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 45)
-        self.assertEqual(result.failed_checks, 45)
+        self.assertEqual(len(result.checks), 46)
+        self.assertEqual(result.failed_checks, 46)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL

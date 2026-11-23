@@ -52,6 +52,7 @@ class GroundTruthAuditor:
         ("EVT-01", "Event ID Uniqueness"),
         ("EVT-02", "Event Domain"),
         ("EVT-03", "Event Index Validity"),
+        ("EVT-04", "Event Interval Non-Overlap"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -142,6 +143,8 @@ class GroundTruthAuditor:
                     result = self._check_event_domain(dataset)
                 elif check_id == "EVT-03":
                     result = self._check_event_indices(dataset)
+                elif check_id == "EVT-04":
+                    result = self._check_event_overlaps(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -663,6 +666,163 @@ class GroundTruthAuditor:
             "*",
             expected="0 <= start_index < end_index <= scenario evaluation length",
             actual=f"event_count={len(events)}; issues={len(issues)}",
+            details=details,
+        )
+
+    def _check_event_overlaps(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Ensure event intervals do not overlap within a scenario."""
+        check_id, name = "EVT-04", "Event Interval Non-Overlap"
+        events = dataset.events
+
+        if not isinstance(events, pd.DataFrame):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata must be a pandas DataFrame.",
+                "*",
+                expected="events DataFrame with scenario, start_index, end_index",
+                actual=type(events).__name__,
+            )
+
+        required_columns = ("scenario", "start_index", "end_index")
+        missing = [
+            column for column in required_columns
+            if column not in events.columns
+        ]
+
+        if missing:
+            details = tuple(
+                item
+                for column in missing
+                for item in (
+                    ("field", column),
+                    ("issue", "missing required column"),
+                )
+            )
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata is missing required columns.",
+                "*",
+                expected=str(required_columns),
+                actual=f"missing={missing}",
+                details=details,
+            )
+
+        intervals_by_scenario = {}
+
+        for position in range(len(events)):
+            scenario = events["scenario"].iloc[position]
+
+            if not isinstance(scenario, str):
+                continue
+
+            if scenario not in SCENARIO_NAMES:
+                continue
+
+            evaluation = dataset.evaluation.get(scenario)
+            if not isinstance(evaluation, pd.DataFrame):
+                continue
+
+            start = events["start_index"].iloc[position]
+            end = events["end_index"].iloc[position]
+
+            start_valid = (
+                isinstance(start, Integral)
+                and not isinstance(start, bool)
+            )
+            end_valid = (
+                isinstance(end, Integral)
+                and not isinstance(end, bool)
+            )
+
+            if not start_valid or not end_valid:
+                continue
+
+            if start < 0 or end <= start or end > len(evaluation):
+                continue
+
+            event_id = (
+                str(events["event_id"].iloc[position])
+                if "event_id" in events.columns
+                else "unavailable"
+            )
+
+            interval = (
+                int(start),
+                int(end),
+                position,
+                str(events.index[position]),
+                event_id,
+            )
+            intervals_by_scenario.setdefault(scenario, []).append(interval)
+
+        issues = []
+
+        for scenario, intervals in intervals_by_scenario.items():
+            ordered = sorted(
+                intervals,
+                key=lambda item: (item[0], item[1], item[2]),
+            )
+
+            for left_position, left in enumerate(ordered):
+                left_start, left_end, _, left_row, left_id = left
+
+                for right_position in range(
+                    left_position + 1,
+                    len(ordered),
+                ):
+                    right = ordered[right_position]
+                    right_start, right_end, _, right_row, right_id = right
+
+                    # Half-open intervals: adjacency is not overlap.
+                    if right_start >= left_end:
+                        break
+
+                    issues.append(
+                        (
+                            ("scenario", scenario),
+                            ("event_a_row", left_row),
+                            ("event_a_id", left_id),
+                            (
+                                "event_a_interval",
+                                f"[{left_start}, {left_end})",
+                            ),
+                            ("event_b_row", right_row),
+                            ("event_b_id", right_id),
+                            (
+                                "event_b_interval",
+                                f"[{right_start}, {right_end})",
+                            ),
+                            ("issue", "event intervals overlap"),
+                        )
+                    )
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+        overlap_pairs = len(issues)
+        valid = overlap_pairs == 0
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS if valid else InspectionStatus.FAIL,
+            "No event intervals overlap within any scenario."
+            if valid else "Event metadata contains overlapping intervals.",
+            "*",
+            expected="No overlapping event intervals within each scenario",
+            actual=(
+                f"event_count={len(events)}; "
+                f"overlap_pairs={overlap_pairs}"
+            ),
             details=details,
         )
 
