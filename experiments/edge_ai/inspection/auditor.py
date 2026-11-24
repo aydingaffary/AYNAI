@@ -53,6 +53,7 @@ class GroundTruthAuditor:
         ("EVT-02", "Event Domain"),
         ("EVT-03", "Event Index Validity"),
         ("EVT-04", "Event Interval Non-Overlap"),
+        ("EVT-05", "Event Timestamp Alignment"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -145,6 +146,8 @@ class GroundTruthAuditor:
                     result = self._check_event_indices(dataset)
                 elif check_id == "EVT-04":
                     result = self._check_event_overlaps(dataset)
+                elif check_id == "EVT-05":
+                    result = self._check_event_timestamps(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -822,6 +825,215 @@ class GroundTruthAuditor:
             actual=(
                 f"event_count={len(events)}; "
                 f"overlap_pairs={overlap_pairs}"
+            ),
+            details=details,
+        )
+
+    def _check_event_timestamps(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Validate event timestamps against indexed evaluation samples."""
+        check_id, name = "EVT-05", "Event Timestamp Alignment"
+        events = dataset.events
+
+        if not isinstance(events, pd.DataFrame):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata must be a pandas DataFrame.",
+                "*",
+                expected=(
+                    "events DataFrame with scenario, start_index, "
+                    "end_index, start_timestamp, end_timestamp"
+                ),
+                actual=type(events).__name__,
+            )
+
+        required_columns = (
+            "scenario",
+            "start_index",
+            "end_index",
+            "start_timestamp",
+            "end_timestamp",
+        )
+        missing = [
+            column for column in required_columns
+            if column not in events.columns
+        ]
+
+        if missing:
+            details = tuple(
+                item
+                for column in missing
+                for item in (
+                    ("field", column),
+                    ("issue", "missing required column"),
+                )
+            )
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                "Event metadata is missing required timestamp fields.",
+                "*",
+                expected=str(required_columns),
+                actual=f"missing={missing}",
+                details=details,
+            )
+
+        issues = []
+        checked_events = 0
+
+        def add_issue(
+            row_index,
+            event_id,
+            scenario,
+            field,
+            expected,
+            actual,
+            reason,
+        ):
+            issues.append(
+                (
+                    ("event_row", str(row_index)),
+                    ("event_id", event_id),
+                    ("scenario", repr(scenario)),
+                    ("field", field),
+                    ("expected", repr(expected)),
+                    ("actual", repr(actual)),
+                    ("issue", reason),
+                )
+            )
+
+        for position in range(len(events)):
+            row_index = events.index[position]
+            event_id = (
+                str(events["event_id"].iloc[position])
+                if "event_id" in events.columns
+                else "unavailable"
+            )
+            scenario = events["scenario"].iloc[position]
+
+            # EVT-02 owns scenario-domain validation.
+            if (
+                not isinstance(scenario, str)
+                or scenario not in SCENARIO_NAMES
+            ):
+                continue
+
+            evaluation = dataset.evaluation.get(scenario)
+            if not isinstance(evaluation, pd.DataFrame):
+                continue
+
+            # EVT-03 owns interval-index validation.
+            start = events["start_index"].iloc[position]
+            end = events["end_index"].iloc[position]
+
+            start_valid = (
+                isinstance(start, Integral)
+                and not isinstance(start, bool)
+            )
+            end_valid = (
+                isinstance(end, Integral)
+                and not isinstance(end, bool)
+            )
+
+            if not start_valid or not end_valid:
+                continue
+
+            if start < 0 or end <= start or end > len(evaluation):
+                continue
+
+            if "timestamp" not in evaluation.columns:
+                add_issue(
+                    row_index,
+                    event_id,
+                    scenario,
+                    "timestamp",
+                    "timestamp column in evaluation",
+                    "missing column",
+                    "scenario evaluation is missing timestamp column",
+                )
+                continue
+
+            checked_events += 1
+
+            endpoints = (
+                (
+                    "start_timestamp",
+                    evaluation["timestamp"].iloc[int(start)],
+                    events["start_timestamp"].iloc[position],
+                ),
+                (
+                    "end_timestamp",
+                    evaluation["timestamp"].iloc[int(end) - 1],
+                    events["end_timestamp"].iloc[position],
+                ),
+            )
+
+            for field, expected_raw, actual_raw in endpoints:
+                try:
+                    expected = pd.to_datetime(
+                        expected_raw,
+                        errors="coerce",
+                    )
+                    actual = pd.to_datetime(
+                        actual_raw,
+                        errors="coerce",
+                    )
+
+                    if pd.isna(expected) or pd.isna(actual):
+                        reason = "timestamp is invalid or missing"
+                        valid = False
+                    else:
+                        valid = expected == actual
+                        reason = (
+                            "timestamp matches evaluation sample"
+                            if valid
+                            else "timestamp does not match evaluation sample"
+                        )
+
+                except (TypeError, ValueError, OverflowError):
+                    expected = expected_raw
+                    actual = actual_raw
+                    valid = False
+                    reason = "timestamp cannot be parsed or compared"
+
+                if not valid:
+                    add_issue(
+                        row_index,
+                        event_id,
+                        scenario,
+                        field,
+                        expected,
+                        actual,
+                        reason,
+                    )
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+        valid = not issues
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS if valid else InspectionStatus.FAIL,
+            "All event timestamps align with their evaluation samples."
+            if valid else "Event metadata contains misaligned timestamps.",
+            "*",
+            expected=(
+                "start_timestamp = evaluation[start_index].timestamp; "
+                "end_timestamp = evaluation[end_index - 1].timestamp"
+            ),
+            actual=(
+                f"event_count={len(events)}; "
+                f"checked_events={checked_events}; "
+                f"issues={len(issues)}"
             ),
             details=details,
         )

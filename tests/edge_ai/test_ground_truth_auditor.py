@@ -851,6 +851,176 @@ class TestEventMetadataAuditor(unittest.TestCase):
             )
 
 
+    def _get_evt05(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-05"
+        )
+
+    def test_evt05_accepts_valid_event_timestamps(self):
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt05_rejects_mismatched_start_timestamp(self):
+        self.dataset.events.loc[0, "start_timestamp"] = (
+            "2025-01-01T00:00:00"
+        )
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("start_timestamp", dict(check.details).values())
+
+    def test_evt05_rejects_mismatched_end_timestamp(self):
+        self.dataset.events.loc[0, "end_timestamp"] = (
+            "2025-01-01T00:00:00"
+        )
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("end_timestamp", dict(check.details).values())
+
+    def test_evt05_rejects_invalid_timestamp(self):
+        self.dataset.events.loc[0, "start_timestamp"] = "not-a-timestamp"
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt05_rejects_missing_event_timestamp_column(self):
+        self.dataset.events.drop(
+            columns=["start_timestamp"],
+            inplace=True,
+        )
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("start_timestamp", dict(check.details).values())
+
+    def test_evt05_rejects_missing_evaluation_timestamp_column(self):
+        scenario = self.dataset.events.loc[0, "scenario"]
+        self.dataset.evaluation[scenario].drop(
+            columns=["timestamp"],
+            inplace=True,
+        )
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt05_skips_unknown_scenario(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt05_skips_invalid_indices(self):
+        self.dataset.events.loc[0, "start_index"] = -1
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=4", check.actual)
+
+    def test_evt05_skips_out_of_bounds_indices(self):
+        scenario = self.dataset.events.loc[0, "scenario"]
+        evaluation_length = len(self.dataset.evaluation[scenario])
+        self.dataset.events.loc[0, "start_index"] = evaluation_length
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=4", check.actual)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt05_skips_non_integral_indices(self):
+        self.dataset.events["start_index"] = (
+            self.dataset.events["start_index"].astype(object)
+        )
+        self.dataset.events.loc[0, "start_index"] = 1.5
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=4", check.actual)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt05_skips_missing_scenario_evaluation(self):
+        scenario = self.dataset.events.loc[0, "scenario"]
+        del self.dataset.evaluation[scenario]
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=4", check.actual)
+
+    def test_evt05_accepts_empty_events_with_valid_schema(self):
+        dataset = replace(
+            self.dataset,
+            events=self.dataset.events.iloc[0:0].copy(),
+        )
+
+        check = self._get_evt05(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=0", check.actual)
+
+    def test_evt05_runs_without_event_id_column(self):
+        self.dataset.events.drop(
+            columns=["event_id"],
+            inplace=True,
+        )
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt05_reports_independent_timestamp_errors(self):
+        self.dataset.events.loc[0, "start_timestamp"] = "invalid-start"
+        self.dataset.events.loc[1, "end_timestamp"] = "invalid-end"
+
+        check = self._get_evt05()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+    def test_evt05_does_not_modify_source_dataframes(self):
+        events_before = self.dataset.events.copy(deep=True)
+        evaluations_before = {
+            scenario: frame.copy(deep=True)
+            for scenario, frame in self.dataset.evaluation.items()
+        }
+
+        self._get_evt05()
+
+        pd.testing.assert_frame_equal(
+            self.dataset.events,
+            events_before,
+        )
+        self.assertEqual(
+            set(self.dataset.evaluation),
+            set(evaluations_before),
+        )
+
+        for scenario, expected in evaluations_before.items():
+            pd.testing.assert_frame_equal(
+                self.dataset.evaluation[scenario],
+                expected,
+            )
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -909,8 +1079,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 46)
-        self.assertEqual(result.failed_checks, 46)
+        self.assertEqual(len(result.checks), 47)
+        self.assertEqual(result.failed_checks, 47)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL
