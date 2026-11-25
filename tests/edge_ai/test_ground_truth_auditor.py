@@ -1021,6 +1021,157 @@ class TestEventMetadataAuditor(unittest.TestCase):
             )
 
 
+    def _get_evt06(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-06"
+        )
+
+    def test_evt06_accepts_valid_event_json(self):
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt06_rejects_invalid_affected_features_json(self):
+        self.dataset.events.loc[0, "affected_features"] = "[invalid"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("affected_features", dict(check.details).values())
+
+    def test_evt06_rejects_invalid_injection_parameters_json(self):
+        self.dataset.events.loc[0, "injection_parameters"] = "{invalid"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("injection_parameters", dict(check.details).values())
+
+    def test_evt06_rejects_empty_affected_features(self):
+        self.dataset.events.loc[0, "affected_features"] = "[]"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt06_rejects_non_array_affected_features(self):
+        self.dataset.events.loc[0, "affected_features"] = (
+            '{"latency_ms": true}'
+        )
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt06_rejects_unknown_feature_names(self):
+        self.dataset.events.loc[0, "affected_features"] = (
+            '["latency_ms", "unknown_feature"]'
+        )
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt06_rejects_non_object_injection_parameters(self):
+        self.dataset.events.loc[0, "injection_parameters"] = "[1, 2, 3]"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=1", check.actual)
+
+    def test_evt06_reports_independent_field_errors(self):
+        self.dataset.events.loc[0, "affected_features"] = "invalid"
+        self.dataset.events.loc[1, "injection_parameters"] = "invalid"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+        fields = [
+            value for key, value in check.details
+            if key == "field"
+        ]
+        self.assertIn("affected_features", fields)
+        self.assertIn("injection_parameters", fields)
+
+    def test_evt06_skips_unknown_scenarios(self):
+        self.dataset.events.loc[0, "scenario"] = "unknown_scenario"
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=4", check.actual)
+        self.assertIn("issues=0", check.actual)
+
+    def test_evt06_rejects_missing_required_columns(self):
+        self.dataset.events.drop(
+            columns=["affected_features"],
+            inplace=True,
+        )
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(
+            "affected_features",
+            dict(check.details).values(),
+        )
+
+    def test_evt06_accepts_empty_events_with_valid_schema(self):
+        dataset = replace(
+            self.dataset,
+            events=self.dataset.events.iloc[0:0].copy(),
+        )
+
+        check = self._get_evt06(dataset)
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=0", check.actual)
+
+    def test_evt06_runs_without_event_id_column(self):
+        self.dataset.events.drop(
+            columns=["event_id"],
+            inplace=True,
+        )
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt06_handles_non_string_json_values(self):
+        self.dataset.events["injection_parameters"] = (
+            self.dataset.events["injection_parameters"].astype(object)
+        )
+        self.dataset.events.loc[0, "affected_features"] = None
+        self.dataset.events.loc[1, "injection_parameters"] = 123
+
+        check = self._get_evt06()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+    def test_evt06_does_not_modify_source_events(self):
+        events_before = self.dataset.events.copy(deep=True)
+
+        self._get_evt06()
+
+        pd.testing.assert_frame_equal(
+            self.dataset.events,
+            events_before,
+        )
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -1079,8 +1230,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 47)
-        self.assertEqual(result.failed_checks, 47)
+        self.assertEqual(len(result.checks), 48)
+        self.assertEqual(result.failed_checks, 48)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL
