@@ -1,6 +1,7 @@
 """Tests and fixtures for the Ground Truth auditor."""
 
 from dataclasses import replace
+import json
 import unittest
 from unittest.mock import patch
 
@@ -1031,6 +1032,17 @@ class TestEventMetadataAuditor(unittest.TestCase):
             if check.check_id == "EVT-06"
         )
 
+
+    def _get_evt07(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-07"
+        )
+
     def test_evt06_accepts_valid_event_json(self):
         check = self._get_evt06()
 
@@ -1172,6 +1184,117 @@ class TestEventMetadataAuditor(unittest.TestCase):
         )
 
 
+    def test_evt07_accepts_valid_event_features(self):
+        check = self._get_evt07()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("5 valid event(s)", check.actual)
+
+    def test_evt07_rejects_duplicate_affected_features(self):
+        features = json.loads(
+            self.dataset.events.loc[0, "affected_features"]
+        )
+        features.append(features[0])
+        self.dataset.events.loc[0, "affected_features"] = json.dumps(
+            features
+        )
+
+        check = self._get_evt07()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(
+            ("issue", "Duplicate affected feature"),
+            check.details,
+        )
+
+    def test_evt07_rejects_feature_missing_from_evaluation(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        feature = json.loads(event["affected_features"])[0]
+
+        self.dataset.evaluation[scenario] = (
+            self.dataset.evaluation[scenario].drop(columns=[feature])
+        )
+
+        check = self._get_evt07()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("data_source", "evaluation"), check.details)
+        self.assertIn(("feature", feature), check.details)
+
+    def test_evt07_rejects_feature_missing_from_ground_truth(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        feature = json.loads(event["affected_features"])[0]
+
+        self.dataset.ground_truth[scenario] = (
+            self.dataset.ground_truth[scenario].drop(columns=[feature])
+        )
+
+        check = self._get_evt07()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("data_source", "ground_truth"), check.details)
+        self.assertIn(("feature", feature), check.details)
+
+    def test_evt07_reports_multiple_independent_feature_errors(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        features = json.loads(event["affected_features"])
+        first_feature, second_feature = features[:2]
+
+        features.append(first_feature)
+        self.dataset.events.loc[0, "affected_features"] = json.dumps(
+            features
+        )
+
+        self.dataset.evaluation[scenario] = (
+            self.dataset.evaluation[scenario].drop(
+                columns=[first_feature]
+            )
+        )
+        self.dataset.ground_truth[scenario] = (
+            self.dataset.ground_truth[scenario].drop(
+                columns=[second_feature]
+            )
+        )
+
+        check = self._get_evt07()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("3 issue(s)", check.actual)
+        self.assertIn(
+            ("issue", "Duplicate affected feature"),
+            check.details,
+        )
+        self.assertIn(("data_source", "evaluation"), check.details)
+        self.assertIn(("data_source", "ground_truth"), check.details)
+
+    def test_evt07_leaves_invalid_json_to_evt06(self):
+        self.dataset.events.loc[0, "affected_features"] = "[invalid"
+
+        result = self.auditor.audit_seed(
+            self.dataset,
+            self.manifest,
+        )
+        checks = {
+            check.check_id: check
+            for check in result.checks
+        }
+
+        self.assertEqual(
+            checks["EVT-06"].status,
+            InspectionStatus.FAIL,
+        )
+        self.assertEqual(
+            checks["EVT-07"].status,
+            InspectionStatus.PASS,
+        )
+        self.assertIn(
+            "4 valid event(s)",
+            checks["EVT-07"].actual,
+        )
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -1230,8 +1353,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 48)
-        self.assertEqual(result.failed_checks, 48)
+        self.assertEqual(len(result.checks), 49)
+        self.assertEqual(result.failed_checks, 49)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL

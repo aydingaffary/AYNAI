@@ -57,6 +57,7 @@ class GroundTruthAuditor:
         ("EVT-04", "Event Interval Non-Overlap"),
         ("EVT-05", "Event Timestamp Alignment"),
         ("EVT-06", "Event JSON Integrity"),
+        ("EVT-07", "Event Feature Integrity"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -153,6 +154,8 @@ class GroundTruthAuditor:
                     result = self._check_event_timestamps(dataset)
                 elif check_id == "EVT-06":
                     result = self._check_event_json_integrity(dataset)
+                elif check_id == "EVT-07":
+                    result = self._check_event_feature_integrity(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -1216,6 +1219,167 @@ class GroundTruthAuditor:
                 f"issues={len(issues)}"
             ),
             details=details,
+        )
+
+    def _check_event_feature_integrity(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Validate affected features against scenario datasets."""
+        check_id, name = "EVT-07", "Event Feature Integrity"
+        events = dataset.events
+
+        # EVT-06 owns malformed event containers and missing JSON columns.
+        required_columns = {
+            "scenario",
+            "affected_features",
+        }
+        if (
+            not isinstance(events, pd.DataFrame)
+            or not required_columns.issubset(events.columns)
+        ):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.PASS,
+                "Skipped: event structure is validated by EVT-06.",
+                "*",
+                actual="No independently auditable event features",
+            )
+
+        issues = []
+        checked_events = 0
+        skipped_events = 0
+
+        for row_index, event in events.iterrows():
+            scenario = event["scenario"]
+
+            # EVT-02 owns invalid scenario values.
+            if scenario not in SCENARIO_NAMES:
+                skipped_events += 1
+                continue
+
+            raw_features = event["affected_features"]
+
+            # EVT-06 owns JSON parsing and feature-list validation.
+            try:
+                features = json.loads(raw_features)
+            except (TypeError, ValueError):
+                skipped_events += 1
+                continue
+
+            if (
+                not isinstance(features, list)
+                or not features
+                or any(
+                    not isinstance(feature, str)
+                    or feature not in FEATURE_COLUMNS
+                    for feature in features
+                )
+            ):
+                skipped_events += 1
+                continue
+
+            checked_events += 1
+            event_id = event.get("event_id", "")
+            seen_features = set()
+
+            evaluation = (
+                dataset.evaluation.get(scenario)
+                if isinstance(dataset.evaluation, dict)
+                else None
+            )
+            ground_truth = (
+                dataset.ground_truth.get(scenario)
+                if isinstance(dataset.ground_truth, dict)
+                else None
+            )
+
+            for feature in features:
+                if feature in seen_features:
+                    issues.append(
+                        (
+                            ("event_row", str(row_index)),
+                            ("event_id", str(event_id)),
+                            ("event_scenario", str(scenario)),
+                            ("feature", feature),
+                            ("data_source", "event metadata"),
+                            ("issue", "Duplicate affected feature"),
+                        )
+                    )
+                else:
+                    seen_features.add(feature)
+
+            # Check dataset columns only once per unique feature.
+            for feature in dict.fromkeys(features):
+                if (
+                    not isinstance(evaluation, pd.DataFrame)
+                    or feature not in evaluation.columns
+                ):
+                    issues.append(
+                        (
+                            ("event_row", str(row_index)),
+                            ("event_id", str(event_id)),
+                            ("event_scenario", str(scenario)),
+                            ("feature", feature),
+                            ("data_source", "evaluation"),
+                            ("issue", "Affected feature is missing"),
+                        )
+                    )
+
+                if (
+                    not isinstance(ground_truth, pd.DataFrame)
+                    or feature not in ground_truth.columns
+                ):
+                    issues.append(
+                        (
+                            ("event_row", str(row_index)),
+                            ("event_id", str(event_id)),
+                            ("event_scenario", str(scenario)),
+                            ("feature", feature),
+                            ("data_source", "ground_truth"),
+                            ("issue", "Affected feature is missing"),
+                        )
+                    )
+
+        details = tuple(
+            detail
+            for issue in issues
+            for detail in issue
+        )
+
+        if issues:
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                (
+                    f"Found {len(issues)} event feature integrity issue(s) "
+                    f"across {checked_events} valid event(s)."
+                ),
+                "*",
+                expected=(
+                    "Unique affected features present in both "
+                    "Evaluation and Ground Truth"
+                ),
+                actual=f"{len(issues)} issue(s)",
+                details=details,
+            )
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS,
+            (
+                f"All {checked_events} valid event(s) reference unique "
+                "features present in Evaluation and Ground Truth."
+            ),
+            "*",
+            expected="Unique affected features present in both datasets",
+            actual=(
+                f"{checked_events} valid event(s); "
+                f"{skipped_events} delegated event(s)"
+            ),
         )
 
     def _check_seed(
