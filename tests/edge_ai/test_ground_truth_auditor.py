@@ -1043,6 +1043,16 @@ class TestEventMetadataAuditor(unittest.TestCase):
             if check.check_id == "EVT-07"
         )
 
+    def _get_evt08(self, dataset=None):
+        result = self.auditor.audit_seed(
+            dataset or self.dataset,
+            self.manifest,
+        )
+        return next(
+            check for check in result.checks
+            if check.check_id == "EVT-08"
+        )
+
     def test_evt06_accepts_valid_event_json(self):
         check = self._get_evt06()
 
@@ -1295,6 +1305,170 @@ class TestEventMetadataAuditor(unittest.TestCase):
             checks["EVT-07"].actual,
         )
 
+    def test_evt08_accepts_valid_event_ground_truth_alignment(self):
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=5", check.actual)
+
+    def test_evt08_rejects_incorrect_anomaly_label(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        sample_index = int(event["start_index"])
+        self.dataset.ground_truth[scenario].iloc[
+            sample_index,
+            self.dataset.ground_truth[scenario].columns.get_loc("is_anomaly"),
+        ] = 0
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("field", "is_anomaly"), check.details)
+        self.assertIn(("sample_index", str(sample_index)), check.details)
+
+    def test_evt08_rejects_incorrect_event_id(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        sample_index = int(event["start_index"])
+        self.dataset.ground_truth[scenario].iloc[
+            sample_index,
+            self.dataset.ground_truth[scenario].columns.get_loc("event_id"),
+        ] = "wrong-event-id"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("field", "event_id"), check.details)
+
+    def test_evt08_rejects_incorrect_anomaly_type(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        sample_index = int(event["start_index"])
+        self.dataset.ground_truth[scenario].iloc[
+            sample_index,
+            self.dataset.ground_truth[scenario].columns.get_loc("anomaly_type"),
+        ] = "wrong-scenario"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("field", "anomaly_type"), check.details)
+
+    def test_evt08_rejects_incorrect_severity(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        sample_index = int(event["start_index"])
+        self.dataset.ground_truth[scenario].iloc[
+            sample_index,
+            self.dataset.ground_truth[scenario].columns.get_loc("severity"),
+        ] = "wrong-severity"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn(("field", "severity"), check.details)
+
+    def test_evt08_reports_multiple_independent_mismatches(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        sample_index = int(event["start_index"])
+        ground_truth = self.dataset.ground_truth[scenario]
+        ground_truth.iloc[
+            sample_index,
+            ground_truth.columns.get_loc("event_id"),
+        ] = "wrong-event-id"
+        ground_truth.iloc[
+            sample_index,
+            ground_truth.columns.get_loc("severity"),
+        ] = "wrong-severity"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.FAIL)
+        self.assertIn("issues=2", check.actual)
+
+    def test_evt08_uses_half_open_event_intervals(self):
+        event = self.dataset.events.iloc[0]
+        scenario = event["scenario"]
+        end_index = int(event["end_index"])
+        ground_truth = self.dataset.ground_truth[scenario]
+        ground_truth.iloc[
+            end_index,
+            ground_truth.columns.get_loc("event_id"),
+        ] = "outside-event"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+
+    def test_evt08_skips_invalid_and_duplicate_event_ids(self):
+        first_id = self.dataset.events.iloc[0]["event_id"]
+        self.dataset.events.iloc[
+            1,
+            self.dataset.events.columns.get_loc("event_id"),
+        ] = first_id
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("skipped_events=2", check.actual)
+
+    def test_evt08_is_independent_of_invalid_event_json(self):
+        self.dataset.events.loc[0, "affected_features"] = "[invalid"
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("checked_events=5", check.actual)
+
+    def test_evt08_skips_unhashable_severity_owned_by_evt02(self):
+        self.dataset.events.iloc[
+            0,
+            self.dataset.events.columns.get_loc("severity"),
+        ] = ["invalid"]
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.PASS)
+        self.assertIn("skipped_events=1", check.actual)
+
+    def test_evt08_is_not_applicable_when_ground_truth_scenario_is_missing(self):
+        scenario = self.dataset.events.iloc[0]["scenario"]
+        del self.dataset.ground_truth[scenario]
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.NOT_APPLICABLE)
+        self.assertIn("Ground Truth", check.message)
+
+    def test_evt08_is_not_applicable_when_required_ground_truth_columns_are_missing(self):
+        scenario = self.dataset.events.iloc[0]["scenario"]
+        self.dataset.ground_truth[scenario] = (
+            self.dataset.ground_truth[scenario].drop(columns=["severity"])
+        )
+
+        check = self._get_evt08()
+
+        self.assertEqual(check.status, InspectionStatus.NOT_APPLICABLE)
+        self.assertIn("severity", check.actual)
+
+    def test_evt08_does_not_modify_source_dataframes(self):
+        events_before = self.dataset.events.copy(deep=True)
+        ground_truth_before = {
+            scenario: frame.copy(deep=True)
+            for scenario, frame in self.dataset.ground_truth.items()
+        }
+
+        self._get_evt08()
+
+        pd.testing.assert_frame_equal(self.dataset.events, events_before)
+        for scenario, expected in ground_truth_before.items():
+            pd.testing.assert_frame_equal(
+                self.dataset.ground_truth[scenario],
+                expected,
+            )
+
+
 class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
     def setUp(self):
@@ -1353,8 +1527,8 @@ class TestGroundTruthAuditorFaultIsolation(unittest.TestCase):
 
         self.assertEqual(result.seed, 1000)
         self.assertEqual(result.dataset_count, len(SCENARIO_NAMES))
-        self.assertEqual(len(result.checks), 49)
-        self.assertEqual(result.failed_checks, 49)
+        self.assertEqual(len(result.checks), 50)
+        self.assertEqual(result.failed_checks, 50)
         self.assertTrue(
             all(
                 check.status == InspectionStatus.FAIL

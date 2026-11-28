@@ -58,6 +58,7 @@ class GroundTruthAuditor:
         ("EVT-05", "Event Timestamp Alignment"),
         ("EVT-06", "Event JSON Integrity"),
         ("EVT-07", "Event Feature Integrity"),
+        ("EVT-08", "Event-to-Ground Truth Alignment"),
     )
 
     CHECKS = GROUND_TRUTH_CHECKS + EVENT_CHECKS
@@ -156,6 +157,8 @@ class GroundTruthAuditor:
                     result = self._check_event_json_integrity(dataset)
                 elif check_id == "EVT-07":
                     result = self._check_event_feature_integrity(dataset)
+                elif check_id == "EVT-08":
+                    result = self._check_event_ground_truth_alignment(dataset)
                 else:
                     raise NotImplementedError(
                         f"Event check is not implemented: {check_id}"
@@ -1379,6 +1382,233 @@ class GroundTruthAuditor:
             actual=(
                 f"{checked_events} valid event(s); "
                 f"{skipped_events} delegated event(s)"
+            ),
+        )
+
+    def _check_event_ground_truth_alignment(
+        self,
+        dataset: SeedDataset,
+    ) -> AuditCheckResult:
+        """Compare each valid event interval with its Ground Truth metadata."""
+        check_id = "EVT-08"
+        name = "Event-to-Ground Truth Alignment"
+        events = dataset.events
+
+        required_event_columns = {
+            "event_id",
+            "scenario",
+            "severity",
+            "start_index",
+            "end_index",
+        }
+        required_ground_truth_columns = {
+            "is_anomaly",
+            "event_id",
+            "anomaly_type",
+            "severity",
+        }
+
+        if (
+            not isinstance(events, pd.DataFrame)
+            or not required_event_columns.issubset(events.columns)
+        ):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.NOT_APPLICABLE,
+                "Skipped: event structure or required columns are unavailable; "
+                "the relevant event checks own these errors.",
+                "*",
+                expected=str(sorted(required_event_columns)),
+                actual=(
+                    type(events).__name__
+                    if not isinstance(events, pd.DataFrame)
+                    else f"missing={sorted(required_event_columns - set(events.columns))}"
+                ),
+            )
+
+        if not isinstance(dataset.ground_truth, dict):
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.NOT_APPLICABLE,
+                "Skipped: Ground Truth scenario mapping is unavailable.",
+                "*",
+                expected="Ground Truth mapping by scenario",
+                actual=type(dataset.ground_truth).__name__,
+            )
+
+        # EVT-01 owns invalid and duplicate identifiers. Do not select an
+        # arbitrary row when an identifier is ambiguous.
+        id_counts = {}
+        for event_id in events["event_id"].tolist():
+            if isinstance(event_id, str) and event_id.strip():
+                id_counts[event_id] = id_counts.get(event_id, 0) + 1
+
+        issues = []
+        checked_events = 0
+        skipped_events = 0
+        skipped_scenarios = set()
+
+        for position in range(len(events)):
+            row = events.iloc[position]
+            row_index = str(events.index[position])
+            event_id = row["event_id"]
+            scenario = row["scenario"]
+            severity = row["severity"]
+            start = row["start_index"]
+            end = row["end_index"]
+
+            if (
+                not isinstance(event_id, str)
+                or not event_id.strip()
+                or id_counts.get(event_id, 0) != 1
+            ):
+                skipped_events += 1
+                continue
+
+            # EVT-02 owns invalid scenario and severity values.
+            if (
+                not isinstance(scenario, str)
+                or scenario not in SCENARIO_NAMES
+                or not isinstance(severity, str)
+                or severity not in {"weak", "medium", "strong"}
+            ):
+                skipped_events += 1
+                continue
+
+            # EVT-03 owns invalid event intervals and missing evaluations.
+            if (
+                not isinstance(start, Integral)
+                or isinstance(start, bool)
+                or not isinstance(end, Integral)
+                or isinstance(end, bool)
+            ):
+                skipped_events += 1
+                continue
+
+            evaluation = (
+                dataset.evaluation.get(scenario)
+                if isinstance(dataset.evaluation, dict)
+                else None
+            )
+            ground_truth = dataset.ground_truth.get(scenario)
+
+            if not isinstance(evaluation, pd.DataFrame):
+                skipped_events += 1
+                continue
+
+            if not isinstance(ground_truth, pd.DataFrame):
+                return self._result(
+                    check_id,
+                    name,
+                    InspectionStatus.NOT_APPLICABLE,
+                    "Skipped: Ground Truth for an eligible event scenario "
+                    "is unavailable.",
+                    scenario,
+                    expected="Ground Truth DataFrame for the event scenario",
+                    actual=type(ground_truth).__name__,
+                )
+
+            # GT-04 owns Evaluation/Ground Truth length alignment.
+            if len(ground_truth) != len(evaluation):
+                skipped_events += 1
+                skipped_scenarios.add(scenario)
+                continue
+
+            if not required_ground_truth_columns.issubset(
+                ground_truth.columns
+            ):
+                missing = sorted(
+                    required_ground_truth_columns - set(ground_truth.columns)
+                )
+                return self._result(
+                    check_id,
+                    name,
+                    InspectionStatus.NOT_APPLICABLE,
+                    "Skipped: Required Ground Truth columns are unavailable.",
+                    scenario,
+                    expected=str(sorted(required_ground_truth_columns)),
+                    actual=f"missing={missing}",
+                )
+
+            if start < 0 or end <= start or end > len(evaluation):
+                skipped_events += 1
+                continue
+
+            checked_events += 1
+            expected_values = (
+                ("is_anomaly", 1),
+                ("event_id", event_id),
+                ("anomaly_type", scenario),
+                ("severity", severity),
+            )
+
+            for sample_index in range(int(start), int(end)):
+                sample = ground_truth.iloc[sample_index]
+
+                for field, expected in expected_values:
+                    actual = sample[field]
+                    try:
+                        matches = bool(actual == expected)
+                    except (TypeError, ValueError):
+                        matches = False
+
+                    if not matches:
+                        issues.append(
+                            (
+                                ("event_row", row_index),
+                                ("event_id", event_id),
+                                ("scenario", scenario),
+                                ("sample_index", str(sample_index)),
+                                ("field", field),
+                                ("expected", repr(expected)),
+                                ("actual", repr(actual)),
+                                ("issue", "Event metadata does not match Ground Truth"),
+                            )
+                        )
+
+        details = tuple(
+            item
+            for issue in issues
+            for item in issue
+        )
+
+        if issues:
+            return self._result(
+                check_id,
+                name,
+                InspectionStatus.FAIL,
+                (
+                    f"Found {len(issues)} event-to-Ground Truth mismatch(es) "
+                    f"across {checked_events} checked event(s)."
+                ),
+                "*",
+                expected=(
+                    "Each event interval must contain is_anomaly=1 and "
+                    "matching event_id, anomaly_type, and severity"
+                ),
+                actual=(
+                    f"checked_events={checked_events}; "
+                    f"skipped_events={skipped_events}; issues={len(issues)}"
+                ),
+                details=details,
+            )
+
+        return self._result(
+            check_id,
+            name,
+            InspectionStatus.PASS,
+            "All checked event intervals align with their Ground Truth metadata.",
+            "*",
+            expected=(
+                "Each event interval must contain is_anomaly=1 and "
+                "matching event_id, anomaly_type, and severity"
+            ),
+            actual=(
+                f"checked_events={checked_events}; "
+                f"skipped_events={skipped_events}; "
+                f"skipped_scenarios={len(skipped_scenarios)}"
             ),
         )
 
